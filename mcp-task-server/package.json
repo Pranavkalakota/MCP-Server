@@ -1,0 +1,22 @@
+{
+    "name": "mcp-task-server",
+    "version": "1.0.0",
+    "description": "An MCP server for task management with SQLite storage — CS 290 Final Challenge",
+    "type": "module",
+    "scripts": {
+        "build": "tsc",
+        "start": "tsx src/index.ts",
+        "dev": "tsx watch src/index.ts",
+        "test-client": "tsx src/test-client.ts"
+    },
+    "dependencies": {
+        "@modelcontextprotocol/sdk": "^1.12.1",
+        "sql.js": "^1.12.0",
+        "zod": "^3.24.4"
+    },
+    "devDependencies": {
+        "@types/node": "^22.15.3",
+        "tsx": "^4.19.4",
+        "typescript": "^5.8.3"
+    }
+}
