@@ -56,47 +56,59 @@ server.tool("add_task", "Create a new task. Returns the created task with its ID
     priority: z.enum(["low", "medium", "high"]).optional().describe("Priority level — defaults to medium"),
     due_date: z.string().optional().describe("Due date in YYYY-MM-DD format"),
 }, async ({ title, description, priority, due_date }) => {
-    const desc = description ?? "";
-    const prio = priority ?? "medium";
-    const due = due_date ?? null;
-    db.run(`INSERT INTO tasks (title, description, priority, due_date) VALUES (?, ?, ?, ?)`, [title, desc, prio, due]);
-    // Get the ID before saveDb which may interfere with last_insert_rowid
-    const idResult = db.exec(`SELECT last_insert_rowid() as id`);
-    const insertedId = idResult.length > 0 ? idResult[0].values[0][0] : null;
-    saveDb();
-    if (insertedId == null) {
+    try {
+        const desc = description ?? "";
+        const prio = priority ?? "medium";
+        const due = due_date ?? null;
+        db.run(`INSERT INTO tasks (title, description, priority, due_date) VALUES (?, ?, ?, ?)`, [title, desc, prio, due]);
+        // Get the ID before saveDb which may interfere with last_insert_rowid
+        const idResult = db.exec(`SELECT last_insert_rowid() as id`);
+        const insertedId = idResult.length > 0 ? idResult[0].values[0][0] : null;
+        saveDb();
+        if (insertedId == null) {
+            return {
+                content: [
+                    {
+                        type: "text",
+                        text: JSON.stringify({ success: true, message: "Task created but could not retrieve ID", title, description: desc, priority: prio, due_date: due }, null, 2),
+                    },
+                ],
+            };
+        }
+        // Grab the newly inserted row by known ID
+        const result = db.exec(`SELECT * FROM tasks WHERE id = ${insertedId}`);
+        if (!result || !result.length || !result[0] || !result[0].values || !result[0].values.length) {
+            return {
+                content: [
+                    {
+                        type: "text",
+                        text: JSON.stringify({ success: true, id: insertedId, title, description: desc, priority: prio, due_date: due, debug: { resultLength: result?.length, resultAtZero: result?.[0] ? 'exists' : 'null' } }, null, 2),
+                    },
+                ],
+            };
+        }
+        const cols = result[0].columns;
+        const vals = result[0].values[0];
+        const task = Object.fromEntries(cols.map((c, i) => [c, vals[i]]));
         return {
             content: [
                 {
                     type: "text",
-                    text: JSON.stringify({ success: true, message: "Task created but could not retrieve ID", title, description: desc, priority: prio, due_date: due }, null, 2),
+                    text: JSON.stringify(task, null, 2),
                 },
             ],
         };
     }
-    // Grab the newly inserted row by known ID
-    const result = db.exec(`SELECT * FROM tasks WHERE id = ${insertedId}`);
-    if (!result.length || !result[0].values.length) {
+    catch (err) {
         return {
             content: [
                 {
                     type: "text",
-                    text: JSON.stringify({ success: true, id: insertedId, title, description: desc, priority: prio, due_date: due }, null, 2),
+                    text: `Error in add_task: ${err.message}\nStack: ${err.stack}`,
                 },
             ],
         };
     }
-    const cols = result[0].columns;
-    const vals = result[0].values[0];
-    const task = Object.fromEntries(cols.map((c, i) => [c, vals[i]]));
-    return {
-        content: [
-            {
-                type: "text",
-                text: JSON.stringify(task, null, 2),
-            },
-        ],
-    };
 });
 // ──────────── Tool 2: get_tasks ────────────
 server.tool("get_tasks", "Search and filter tasks. Returns matching tasks as JSON. All parameters are optional — calling with no filters returns all tasks.", {

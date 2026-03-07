@@ -70,60 +70,71 @@ server.tool(
         due_date: z.string().optional().describe("Due date in YYYY-MM-DD format"),
     },
     async ({ title, description, priority, due_date }) => {
-        const desc = description ?? "";
-        const prio = priority ?? "medium";
-        const due = due_date ?? null;
+        try {
+            const desc = description ?? "";
+            const prio = priority ?? "medium";
+            const due = due_date ?? null;
 
-        db.run(
-            `INSERT INTO tasks (title, description, priority, due_date) VALUES (?, ?, ?, ?)`,
-            [title, desc, prio, due]
-        );
+            db.run(
+                `INSERT INTO tasks (title, description, priority, due_date) VALUES (?, ?, ?, ?)`,
+                [title, desc, prio, due]
+            );
 
-        // Get the ID before saveDb which may interfere with last_insert_rowid
-        const idResult = db.exec(`SELECT last_insert_rowid() as id`);
-        const insertedId = idResult.length > 0 ? idResult[0].values[0][0] : null;
+            // Get the ID before saveDb which may interfere with last_insert_rowid
+            const idResult = db.exec(`SELECT last_insert_rowid() as id`);
+            const insertedId = idResult.length > 0 ? idResult[0].values[0][0] : null;
 
-        saveDb();
+            saveDb();
 
-        if (insertedId == null) {
+            if (insertedId == null) {
+                return {
+                    content: [
+                        {
+                            type: "text" as const,
+                            text: JSON.stringify({ success: true, message: "Task created but could not retrieve ID", title, description: desc, priority: prio, due_date: due }, null, 2),
+                        },
+                    ],
+                };
+            }
+
+            // Grab the newly inserted row by known ID
+            const result = db.exec(
+                `SELECT * FROM tasks WHERE id = ${insertedId}`
+            );
+
+            if (!result || !result.length || !result[0] || !result[0].values || !result[0].values.length) {
+                return {
+                    content: [
+                        {
+                            type: "text" as const,
+                            text: JSON.stringify({ success: true, id: insertedId, title, description: desc, priority: prio, due_date: due, debug: { resultLength: result?.length, resultAtZero: result?.[0] ? 'exists' : 'null' } }, null, 2),
+                        },
+                    ],
+                };
+            }
+
+            const cols = result[0].columns;
+            const vals = result[0].values[0];
+            const task = Object.fromEntries(cols.map((c: string, i: number) => [c, vals[i]]));
+
             return {
                 content: [
                     {
                         type: "text" as const,
-                        text: JSON.stringify({ success: true, message: "Task created but could not retrieve ID", title, description: desc, priority: prio, due_date: due }, null, 2),
+                        text: JSON.stringify(task, null, 2),
                     },
                 ],
             };
-        }
-
-        // Grab the newly inserted row by known ID
-        const result = db.exec(
-            `SELECT * FROM tasks WHERE id = ${insertedId}`
-        );
-
-        if (!result.length || !result[0].values.length) {
+        } catch (err: any) {
             return {
                 content: [
                     {
                         type: "text" as const,
-                        text: JSON.stringify({ success: true, id: insertedId, title, description: desc, priority: prio, due_date: due }, null, 2),
+                        text: `Error in add_task: ${err.message}\nStack: ${err.stack}`,
                     },
                 ],
             };
         }
-
-        const cols = result[0].columns;
-        const vals = result[0].values[0];
-        const task = Object.fromEntries(cols.map((c: string, i: number) => [c, vals[i]]));
-
-        return {
-            content: [
-                {
-                    type: "text" as const,
-                    text: JSON.stringify(task, null, 2),
-                },
-            ],
-        };
     }
 );
 
