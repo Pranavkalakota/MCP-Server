@@ -78,12 +78,40 @@ server.tool(
             `INSERT INTO tasks (title, description, priority, due_date) VALUES (?, ?, ?, ?)`,
             [title, desc, prio, due]
         );
+
+        // Get the ID before saveDb which may interfere with last_insert_rowid
+        const idResult = db.exec(`SELECT last_insert_rowid() as id`);
+        const insertedId = idResult.length > 0 ? idResult[0].values[0][0] : null;
+
         saveDb();
 
-        // Grab the newly inserted row
+        if (insertedId == null) {
+            return {
+                content: [
+                    {
+                        type: "text" as const,
+                        text: JSON.stringify({ success: true, message: "Task created but could not retrieve ID", title, description: desc, priority: prio, due_date: due }, null, 2),
+                    },
+                ],
+            };
+        }
+
+        // Grab the newly inserted row by known ID
         const result = db.exec(
-            `SELECT * FROM tasks WHERE id = last_insert_rowid()`
+            `SELECT * FROM tasks WHERE id = ${insertedId}`
         );
+
+        if (!result.length || !result[0].values.length) {
+            return {
+                content: [
+                    {
+                        type: "text" as const,
+                        text: JSON.stringify({ success: true, id: insertedId, title, description: desc, priority: prio, due_date: due }, null, 2),
+                    },
+                ],
+            };
+        }
+
         const cols = result[0].columns;
         const vals = result[0].values[0];
         const task = Object.fromEntries(cols.map((c: string, i: number) => [c, vals[i]]));
