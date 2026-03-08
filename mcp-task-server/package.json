@@ -8,7 +8,8 @@
         "start": "tsx src/index.ts",
         "dev": "tsx watch src/index.ts",
         "test-client": "tsx src/test-client.ts",
-        "open-db": "node open-db.js"
+        "open-db": "node open-db.js",
+        "start-ui": "node start-all.js"
     },
     "dependencies": {
         "@modelcontextprotocol/sdk": "^1.12.1",

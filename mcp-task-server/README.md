@@ -8,27 +8,22 @@ CS 290 Final Challenge — an MCP server exposing **three tools** backed by nati
 | `get_tasks` | Filters/searches tasks by status (`todo`/`in_progress`/`done`), priority, or keyword |
 | `delete_task` | Deletes a task by ID or exact title |
 
-## Running the Project & Web UI
+## Running the Project & Web UI (The Easy Way)
 
-If you want to run this project natively, test the tools, or use the Web UI dashboard, simply run the following in your terminal:
+To test the entire system instantly (Backend + Web Dashboard + SQLite DB), run this single automated command:
 
 ```bash
 cd mcp-task-server
 npm install
-node web-ui-server.cjs
+npm run start-ui
 ```
 
-The Web API will then be available on `http://localhost:3000`. You can now open `/task-ui/index.html` in your browser to interact with the database via a beautiful UI!
+This single orchestrator command will:
+1. Start the API Server (`http://localhost:3000`)
+2. Automatically launch the beautiful Web UI Dashboard (`index.html`) directly in your default browser.
+3. Automatically launch your native SQLite Database to prove everything syncs natively.
 
-## Viewing the Database Automatically
-If you want to view the SQLite database visually and live, run:
-
-```bash
-cd mcp-task-server
-npm run open-db
-```
-
-This automated script will check if you have **DB Browser for SQLite** installed. If you do, it automatically opens `tasks.db`. If you do NOT have it, it will ask for your permission to install it via Homebrew and then open it for you!
+*(If you don't have a DB viewer installed, it will neatly prompt you in the terminal to install DB Browser with one click natively!).*
 
 ## IDE / Agent Configuration (MCP)
 
