@@ -30,6 +30,12 @@ async function start() {
                     created_at  TEXT    DEFAULT (datetime('now')),
                     updated_at  TEXT    DEFAULT (datetime('now'))
                 );
+                CREATE TABLE IF NOT EXISTS undo_history (
+                    id      INTEGER PRIMARY KEY AUTOINCREMENT,
+                    type    TEXT NOT NULL,
+                    data    TEXT NOT NULL,
+                    is_redo INTEGER DEFAULT 0
+                );
             `);
         }
     });
@@ -49,15 +55,43 @@ async function start() {
     // Helper to re-sequence IDs to match 1, 2, 3...
     const syncIds = async () => {
         const rows = await all("SELECT * FROM tasks ORDER BY id ASC");
-        // Clear all tasks
         await run("DELETE FROM tasks");
-        // Reset the auto-increment counter
         await run("DELETE FROM sqlite_sequence WHERE name='tasks'");
-        // Re-insert tasks with fresh sequential IDs
         for (const t of rows) {
             await run("INSERT INTO tasks (title, description, priority, status, due_date, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                 [t.title, t.description, t.priority, t.status, t.due_date, t.created_at]);
         }
+    };
+
+    const pushHistory = async (type, data, isRedo = 0) => {
+        await run("INSERT INTO undo_history (type, data, is_redo) VALUES (?, ?, ?)", [type, JSON.stringify(data), isRedo]);
+    };
+
+    const performHistoryAction = async (isUndoRequest) => {
+        const typeFilter = isUndoRequest ? 0 : 1;
+        const history = await all("SELECT * FROM undo_history WHERE is_redo = ? ORDER BY id DESC LIMIT 1", [typeFilter]);
+        if (!history.length) return null;
+
+        const entry = history[0];
+        const data = JSON.parse(entry.data);
+        await run("DELETE FROM undo_history WHERE id = ?", [entry.id]);
+
+        if (entry.type === "add") {
+            // Re-adding a deleted task
+            await run("INSERT INTO tasks (title, description, priority, status, due_date) VALUES (?, ?, ?, ?, ?)",
+                [data.title, data.description, data.priority, data.status, data.due_date]);
+            await pushHistory("delete", { title: data.title }, isUndoRequest ? 1 : 0);
+        } else if (entry.type === "delete") {
+            // Deleting an added task
+            const matches = await all("SELECT * FROM tasks WHERE title = ? ORDER BY id DESC LIMIT 1", [data.title]);
+            if (matches.length) {
+                const target = matches[0];
+                await run("DELETE FROM tasks WHERE id = ?", [target.id]);
+                await pushHistory("add", target, isUndoRequest ? 1 : 0);
+            }
+        }
+        await syncIds();
+        return entry.type === "add" ? `restored task "${data.title}"` : `removed task "${data.title}"`;
     };
 
     app.get('/tasks', async (req, res) => {
@@ -73,7 +107,8 @@ async function start() {
         const { title, priority, due_date } = req.body;
         try {
             await run("INSERT INTO tasks (title, priority, due_date) VALUES (?, ?, ?)", [title, priority, due_date]);
-            await syncIds(); // Keep IDs 1, 2, 3...
+            await pushHistory("delete", { title });
+            await syncIds();
             res.json({ success: true });
         } catch (err) {
             res.status(500).json({ error: err.message });
@@ -83,8 +118,10 @@ async function start() {
     app.delete('/tasks/:id', async (req, res) => {
         const { id } = req.params;
         try {
+            const task = await db.get("SELECT * FROM tasks WHERE id = ?", [id]);
+            if (task) await pushHistory("add", task);
             await run("DELETE FROM tasks WHERE id = ?", [id]);
-            await syncIds(); // Re-sequence after deletion
+            await syncIds();
             res.json({ success: true });
         } catch (err) {
             res.status(500).json({ error: err.message });
@@ -98,6 +135,7 @@ async function start() {
         const tasks = await all("SELECT * FROM tasks ORDER BY id ASC");
 
         if (openai) {
+            console.log("AI CHAT: Using Pro Mode (OpenAI)");
             try {
                 const completion = await openai.chat.completions.create({
                     model: "gpt-4o-mini",
@@ -111,9 +149,11 @@ async function start() {
                             LAST RESPONSE: "${lastResponse || "None"}"
 
                             INSTRUCTIONS:
-                            1. FOR DELETION: You MUST use "ask_confirmation" first unless the user is explicitly confirming (e.g. "yes", "do it") a specific task you just asked about.
-                            2. CONTEXTUAL DELETE: If they say "delete the last task" or "task you just made", target the one with the HIGHEST ID.
-                            3. Return strictly JSON: { "action": "add"|"delete"|"ask_confirmation"|"message", "id": ..., "title": "...", "message": "..." }`
+                            1. DEFAULT ACTION: If the user just provides a phrase (e.g., "walk the dog") without a command, action="add".
+                            2. DELETION: Use "ask_confirmation" for delete/remove/clear/take-out.
+                            3. CONTEXTUAL: "delete last" targets highest ID.
+                            4. UNDO/REDO: Action="undo" or "redo".
+                            5. Return strictly JSON: { "action": "add"|"delete"|"ask_confirmation"|"undo"|"redo"|"message", "id": ..., "title": "...", "message": "..." }`
                         },
                         { role: "user", content: message }
                     ],
@@ -123,40 +163,68 @@ async function start() {
                 const gpt = JSON.parse(completion.choices[0].message.content);
 
                 if (gpt.action === "add") {
-                    await run("INSERT INTO tasks (title, priority) VALUES (?, ?)", [gpt.title || "New Task", "medium"]);
+                    await run("INSERT INTO tasks (title, priority) VALUES (?, ?)", [gpt.title || message, "medium"]);
+                    await pushHistory("delete", { title: gpt.title || message });
                     await syncIds();
-                    return res.json({ response: `Added: "${gpt.title}"` });
+                    return res.json({ response: `[AI PRO] Added: "${gpt.title || message}"` });
                 }
-                else if (gpt.action === "ask_confirmation") return res.json({ response: gpt.message });
+                else if (gpt.action === "ask_confirmation") return res.json({ response: `[AI PRO] ${gpt.message}` });
                 else if (gpt.action === "delete" && gpt.id) {
+                    const task = await db.get("SELECT * FROM tasks WHERE id = ?", [gpt.id]);
+                    if (task) await pushHistory("add", task);
                     await run("DELETE FROM tasks WHERE id = ?", [gpt.id]);
                     await syncIds();
-                    return res.json({ response: `Success! Task #${gpt.id} deleted. IDs re-synchronized.` });
+                    return res.json({ response: `[AI PRO] Success! Task #${gpt.id} deleted.` });
+                }
+                else if (gpt.action === "undo") {
+                    const resText = await performHistoryAction(true);
+                    return res.json({ response: resText ? `[AI PRO] Undone! ${resText}.` : "[AI PRO] Nothing to undo." });
+                }
+                else if (gpt.action === "redo") {
+                    const resText = await performHistoryAction(false);
+                    return res.json({ response: resText ? `[AI PRO] Redone! ${resText}.` : "[AI PRO] Nothing to redo." });
                 }
                 else if (gpt.action === "message") return res.json({ response: gpt.message });
+
+                // If we got an unrecognized action, return an error rather than falling through
+                return res.json({ response: "AI Mode active, but I couldn't determine the next step. Try 'add laundry' or 'show tasks'." });
             } catch (err) {
-                console.error("OpenAI Fallback:", err.message);
+                console.error("OpenAI Error (Falling back to Local NLP):", err.message);
             }
         }
 
-        // --- SECURE FALLBACK NLP (Confirmation & Contextual) ---
+        console.log("AI CHAT: Using Standard Mode (Local NLP)");
 
-        // Check for confirmation of previous question
+        // --- IMPROVED FALLBACK NLP ---
+
+        // 1. Check for confirmation
         if ((msg === "yes" || msg === "do it" || msg === "confirm") && lastResponse.includes("confirm you want to delete")) {
             const idMatch = lastResponse.match(/\d+/);
             if (idMatch) {
                 const targetId = parseInt(idMatch[0]);
+                const task = await db.get("SELECT * FROM tasks WHERE id = ?", [targetId]);
+                if (task) await pushHistory("add", task);
                 await run("DELETE FROM tasks WHERE id = ?", [targetId]);
                 await syncIds();
                 return res.json({ response: `Confirmed. Task #${targetId} removed.` });
             }
         }
 
-        if (msg.includes("delete") || msg.includes("remove") || msg.includes("clear")) {
+        // 2. Undo/Redo
+        if (msg.includes("undo") || msg.includes("revert") || msg.includes("oops")) {
+            const resText = await performHistoryAction(true);
+            return res.json({ response: resText ? `Undone! ${resText}.` : "Nothing to undo." });
+        }
+        if (msg.includes("redo") || msg.includes("bring back")) {
+            const resText = await performHistoryAction(false);
+            return res.json({ response: resText ? `Redone! ${resText}.` : "Nothing to redo." });
+        }
+
+        // 3. Delete (Requires explicit keywords)
+        if (msg.includes("delete") || msg.includes("remove") || msg.includes("clear") || msg.includes("take out")) {
             let targetId = null;
             let targetTitle = "";
 
-            // Handle "last task" or "just made"
             if (msg.includes("last") || msg.includes("just made") || msg.includes("just added")) {
                 if (tasks.length > 0) {
                     const lastTask = tasks[tasks.length - 1];
@@ -183,21 +251,26 @@ async function start() {
             if (targetId) {
                 return res.json({ response: `Please confirm you want to delete task #${targetId} ("${targetTitle}")? (Yes/No)` });
             }
-            return res.json({ response: "I couldn't find that task. Try 'delete 1' or 'delete the last task'." });
+            return res.json({ response: "Specify which task to delete, or try 'delete last'." });
         }
 
+        // 4. List
+        if (msg.includes("list") || msg.includes("show") || msg.includes("tasks")) {
+            return res.json({ response: `You have ${tasks.length} task(s).` });
+        }
+
+        // 5. Default to Add (for "walk the dog", "finish homework", etc.)
+        let title = message;
         if (msg.includes("add") || msg.includes("create") || msg.includes("new")) {
-            let title = message.replace(/\b(add|create|make|new|task|to|remind|me|a|an)\b/gi, "").trim();
+            title = message.replace(/\b(add|create|make|new|task|to|remind|me|a|an)\b/gi, "").trim();
             title = title.replace(/^[^a-zA-Z0-9]+|[^a-zA-Z0-9]+$/g, '').trim();
-            if (!title) title = "Quick Note";
-            await run("INSERT INTO tasks (title) VALUES (?)", [title]);
-            await syncIds();
-            return res.json({ response: `Added task: "${title}"` });
         }
 
-        if (msg.includes("list") || msg.includes("show")) return res.json({ response: `You have ${tasks.length} tasks.` });
-
-        res.json({ response: "I'm not sure. Try 'add laundry' or 'delete the last task'." });
+        if (!title) title = "New Task";
+        await run("INSERT INTO tasks (title) VALUES (?)", [title]);
+        await pushHistory("delete", { title });
+        await syncIds();
+        return res.json({ response: `Added task: "${title}"` });
     });
 
 

@@ -71,6 +71,33 @@ async function syncIds(): Promise<void> {
     }
 }
 
+async function pushHistory(type: string, data: any, isRedo: number = 0): Promise<void> {
+    await db.run("INSERT INTO undo_history (type, data, is_redo) VALUES (?, ?, ?)", [type, JSON.stringify(data), isRedo]);
+}
+
+async function performHistoryAction(isUndoRequest: boolean): Promise<string | null> {
+    const typeFilter = isUndoRequest ? 0 : 1;
+    const history = await db.get("SELECT * FROM undo_history WHERE is_redo = ? ORDER BY id DESC LIMIT 1", [typeFilter]);
+    if (!history) return null;
+
+    await db.run("DELETE FROM undo_history WHERE id = ?", [history.id]);
+    const data = JSON.parse(history.data);
+
+    if (history.type === "add") {
+        await db.run("INSERT INTO tasks (title, description, priority, status, due_date) VALUES (?, ?, ?, ?, ?)",
+            [data.title, data.description, data.priority, data.status, data.due_date]);
+        await pushHistory("delete", { title: data.title }, isUndoRequest ? 1 : 0);
+    } else if (history.type === "delete") {
+        const target = await db.get("SELECT * FROM tasks WHERE title = ? ORDER BY id DESC LIMIT 1", [data.title]);
+        if (target) {
+            await db.run("DELETE FROM tasks WHERE id = ?", [target.id]);
+            await pushHistory("add", target, isUndoRequest ? 1 : 0);
+        }
+    }
+    await syncIds();
+    return history.type === "add" ? `restored task "${data.title}"` : `removed task "${data.title}"`;
+}
+
 // ──────────── Tool 1: add_task ────────────
 
 server.tool(
@@ -88,6 +115,7 @@ server.tool(
                 `INSERT INTO tasks (title, description, priority, due_date) VALUES (?, ?, ?, ?)`,
                 [title, description ?? "", priority ?? "medium", due_date ?? null]
             );
+            await pushHistory("delete", { title });
             await syncIds();
             const task = await db.get(`SELECT * FROM tasks ORDER BY id DESC LIMIT 1`);
             return {
@@ -125,10 +153,40 @@ server.tool(
         id: z.number().describe("Internal task ID"),
     },
     async ({ id }) => {
+        const task = await db.get("SELECT * FROM tasks WHERE id = ?", [id]);
+        if (task) await pushHistory("add", task);
         await db.run(`DELETE FROM tasks WHERE id = ?`, [id]);
         await syncIds();
         return {
             content: [{ type: "text" as const, text: `Successfully deleted task #${id}.` }],
+        };
+    }
+);
+
+// ──────────── Tool 4: undo ────────────
+
+server.tool(
+    "undo",
+    "Reverse the last task action (add or delete).",
+    {},
+    async () => {
+        const resText = await performHistoryAction(true);
+        return {
+            content: [{ type: "text" as const, text: resText ? `Undone! ${resText}.` : "Nothing to undo." }]
+        };
+    }
+);
+
+// ──────────── Tool 5: redo ────────────
+
+server.tool(
+    "redo",
+    "Re-apply the last undone task action.",
+    {},
+    async () => {
+        const resText = await performHistoryAction(false);
+        return {
+            content: [{ type: "text" as const, text: resText ? `Redone! ${resText}.` : "Nothing to redo." }]
         };
     }
 );
