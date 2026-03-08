@@ -49,6 +49,51 @@ async function start() {
         res.json({ success: true });
     });
 
+    app.post('/chat', (req, res) => {
+        const query = (req.body.message || "").toLowerCase();
+
+        // 1. DELETE INTENT
+        if (query.includes("delete") || query.includes("remove") || query.includes("cancel")) {
+            const match = query.match(/(?:task\s+)?#?(\d+)/i);
+            if (match) {
+                const id = parseInt(match[1]);
+                db.run("DELETE FROM tasks WHERE id = ?", [id]);
+                fs.writeFileSync(DB_PATH, Buffer.from(db.export()));
+                return res.json({ response: `Success! Deleted task #${id}.` });
+            } else {
+                return res.json({ response: "Which task ID would you like me to delete? (e.g., 'delete 5')" });
+            }
+        }
+
+        // 2. READ INTENT
+        if (query.includes("list") || query.includes("show") || query.includes("get") || query.includes("view")) {
+            const result = db.exec("SELECT * FROM tasks");
+            if (!result.length) return res.json({ response: "You have no active tasks matching this query." });
+            return res.json({ response: `You currently have ${result[0].values.length} active task(s).` });
+        }
+
+        // 3. CREATE INTENT
+        if (query.includes("add") || query.includes("create") || query.includes("new") || query.includes("remind")) {
+            let priority = "medium";
+            if (query.includes("high") || query.includes("urgent")) priority = "high";
+            if (query.includes("low") || query.includes("whenever")) priority = "low";
+
+            let due_date = null;
+            const dateMatch = query.match(/\d{4}-\d{2}-\d{2}/);
+            if (dateMatch) due_date = dateMatch[0];
+
+            let title = req.body.message.replace(/(add|create|make|a|new|task|to|remind|me|high|medium|low|urgent|priority|due|on|date|\d{4}-\d{2}-\d{2})/gi, "").trim();
+            title = title.replace(/^[^a-zA-Z0-9]+|[^a-zA-Z0-9]+$/g, '').trim();
+            if (!title) title = "Untitled Task";
+
+            db.run("INSERT INTO tasks (title, priority, due_date) VALUES (?, ?, ?)", [title, priority, due_date]);
+            fs.writeFileSync(DB_PATH, Buffer.from(db.export()));
+            return res.json({ response: `Success! Added task: "${title}"` });
+        }
+
+        res.json({ response: "I'm not sure what you mean. Try 'add a task', 'show tasks', or 'delete task 5'." });
+    });
+
     app.listen(3000, () => {
         console.log("Web API running on http://localhost:3000");
     });

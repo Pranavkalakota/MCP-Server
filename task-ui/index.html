@@ -180,10 +180,62 @@
         <div id="taskList" class="task-list">
             <!-- Tasks will appear here -->
         </div>
+
+        <div class="card" style="margin-top: 30px;">
+            <h3 style="margin-top: 0; margin-bottom: 20px; font-weight: 400; color: #a78bfa;">💬 Conversational
+                Assistant</h3>
+            <div id="chatOutput"
+                style="background: rgba(0,0,0,0.3); border-radius: 12px; padding: 15px; min-height: 80px; max-height: 200px; overflow-y: auto; margin-bottom: 15px; font-size: 0.95rem; color: #ccc;">
+                <em>Hello! I am your conversational agent. Tell me to "add a high priority task to finish homework",
+                    "show tasks", or "delete task 2".</em>
+            </div>
+            <div style="display: flex; gap: 10px;">
+                <input type="text" id="chatInput" placeholder="Message the assistant..." style="flex-grow: 1"
+                    onkeypress="handleChatPress(event)">
+                <button onclick="sendChatMessage()" style="background: #a78bfa; color: #0a0a0c;">SEND</button>
+            </div>
+        </div>
+
     </div>
 
     <script>
         const API = 'http://localhost:3000';
+
+        // Chat functionality
+        function appendChat(msg, isUser = false) {
+            const out = document.getElementById('chatOutput');
+            const div = document.createElement('div');
+            div.style.marginBottom = '10px';
+            div.innerHTML = isUser ? `<b>You:</b> ${msg}` : `<b style="color: #a78bfa;">Assistant:</b> ${msg}`;
+            out.appendChild(div);
+            out.scrollTop = out.scrollHeight;
+        }
+
+        async function sendChatMessage() {
+            const inputField = document.getElementById('chatInput');
+            const text = inputField.value.trim();
+            if (!text) return;
+
+            appendChat(text, true);
+            inputField.value = '';
+
+            try {
+                const res = await fetch(`${API}/chat`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message: text })
+                });
+                const data = await res.json();
+                appendChat(data.response);
+                loadTasks(); // Always reload tasks after a chat action
+            } catch (e) {
+                appendChat("Failed to reach server.");
+            }
+        }
+
+        function handleChatPress(e) {
+            if (e.key === 'Enter') sendChatMessage();
+        }
 
         async function loadTasks() {
             try {
@@ -243,9 +295,6 @@
             if (!isNaN(input)) {
                 await fetch(`${API}/tasks/${input}`, { method: 'DELETE' });
             } else {
-                // If the user wants to delete by exact title via web, we can do a quick GET to find ID or just use a special endpoint. 
-                // For simplicity, let's assume they might mean either ID or title.
-                // We'll just try to find the task first.
                 const res = await fetch(`${API}/tasks`);
                 const tasks = await res.json();
                 const task = tasks.find(t => t.title === input);
