@@ -1,60 +1,52 @@
 # MCP Task Manager Server
 
-CS 290 Final Challenge — an MCP server exposing **two tools** backed by SQLite:
+CS 290 Final Challenge — an MCP server exposing **three tools** backed by native SQLite:
 
 | Tool | What it does |
 |------|-------------|
 | `add_task` | Creates a task with title, description, priority (`low`/`medium`/`high`), and optional due date |
 | `get_tasks` | Filters/searches tasks by status (`todo`/`in_progress`/`done`), priority, or keyword |
+| `delete_task` | Deletes a task by ID or exact title |
 
-## Quick Start
+## Running the Project & Web UI
+
+If you want to run this project natively, test the tools, or use the Web UI dashboard, simply run the following in your terminal:
 
 ```bash
+cd mcp-task-server
 npm install
-npm start        # runs the server on stdio
+node web-ui-server.cjs
 ```
 
-## IDE / Agent Configuration
+The Web API will then be available on `http://localhost:3000`. You can now open `/task-ui/index.html` in your browser to interact with the database via a beautiful UI!
 
-### Claude Desktop (`claude_desktop_config.json`)
-```json
-{
-  "mcpServers": {
-    "task-manager": {
-      "command": "npx",
-      "args": ["tsx", "src/index.ts"],
-      "cwd": "/ABSOLUTE/PATH/TO/mcp-task-server"
-    }
-  }
-}
-```
+## Viewing the Database Automatically
+If you want to view the SQLite database visually and live, run:
 
-### Claude Code
 ```bash
-claude mcp add task-manager -- npx tsx /ABSOLUTE/PATH/TO/mcp-task-server/src/index.ts
+cd mcp-task-server
+npm run open-db
 ```
 
-### VS Code (`.vscode/mcp.json`)
-```json
-{
-  "servers": {
-    "task-manager": {
-      "command": "npx",
-      "args": ["tsx", "src/index.ts"],
-      "cwd": "${workspaceFolder}"
-    }
-  }
-}
-```
+This automated script will check if you have **DB Browser for SQLite** installed. If you do, it automatically opens `tasks.db`. If you do NOT have it, it will ask for your permission to install it via Homebrew and then open it for you!
 
-### Gemini CLI (`.gemini/settings.json`)
+## IDE / Agent Configuration (MCP)
+
+To connect an AI Agent directly to this server without the Web UI:
+
+### VS Code / Cursor (`mcp.json`)
 ```json
 {
   "mcpServers": {
     "task-manager": {
       "command": "npx",
-      "args": ["tsx", "src/index.ts"],
-      "cwd": "/ABSOLUTE/PATH/TO/mcp-task-server"
+      "args": [
+        "tsx",
+        "/ABSOLUTE/PATH/TO/mcp-task-server/src/index.ts"
+      ],
+      "env": {
+        "MCP_TASK_DB_PATH": "/ABSOLUTE/PATH/TO/mcp-task-server"
+      }
     }
   }
 }
@@ -64,15 +56,12 @@ claude mcp add task-manager -- npx tsx /ABSOLUTE/PATH/TO/mcp-task-server/src/ind
 
 ```
 mcp-task-server/
-├── src/index.ts      ← MCP server (both tools defined here)
+├── src/index.ts          ← Main MCP Server (Tools defined here)
+├── web-ui-server.cjs     ← Standalone Express backend for the Web UI
+├── open-db.js            ← Helper script to open tasks.db in DB Browser
 ├── package.json
 ├── tsconfig.json
-└── tasks.db          ← auto-created on first run
+└── tasks.db              ← Auto-created Native SQLite Database
+task-ui/
+└── index.html            ← Stylish Vibe Web UI Dashboard
 ```
-
-## What to Vibe Code Next
-
-Once the MCP server is running, point your IDE agent at it and vibe code a client app that talks to these tools. Ideas:
-- A CLI task manager ("add a high-priority task: finish CS 290 project")
-- A web dashboard that shows all tasks in a kanban board
-- A chat interface that lets you manage tasks conversationally
