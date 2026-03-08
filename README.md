@@ -70,6 +70,18 @@ mcp-task-server/
 └── tasks.db          ← auto-created on first run
 ```
 
+For graders, reviewers, or anyone else testing this project locally, simply clone the repository (or extract the ZIP) and run the following automated commands:
+
+```bash
+# 1. Navigate into the project directory
+cd mcp-task-server
+
+# 2. Install the required dependencies
+npm install
+
+# 3. Start the entire ecosystem automatically
+npm run start-ui
+
 ## What to Vibe Code Next
 
 Once the MCP server is running, point your IDE agent at it and vibe code a client app that talks to these tools. Ideas:
