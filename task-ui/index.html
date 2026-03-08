@@ -190,8 +190,13 @@
         </div>
 
         <div class="card" style="margin-top: 30px;">
-            <h3 style="margin-top: 0; margin-bottom: 20px; font-weight: 400; color: #a78bfa;">💬 Conversational
-                Assistant</h3>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                <h3 style="margin: 0; font-weight: 400; color: #a78bfa;">💬 Conversational Assistant</h3>
+                <div id="modelStatus"
+                    style="font-size: 0.75rem; background: rgba(255,255,255,0.05); padding: 5px 12px; border-radius: 20px; color: #888; border: 1px solid var(--border);">
+                    Detecting AI...
+                </div>
+            </div>
             <div id="chatOutput"
                 style="background: rgba(0,0,0,0.3); border-radius: 12px; padding: 15px; min-height: 80px; max-height: 200px; overflow-y: auto; margin-bottom: 15px; font-size: 0.95rem; color: #ccc;">
                 <em>Hello! I am your conversational agent. Tell me to "add a high priority task to finish homework",
@@ -287,14 +292,27 @@
         }
 
 
+        async function checkStatus() {
+            try {
+                const res = await fetch(`${API}/status`);
+                const data = await res.json();
+                const statusEl = document.getElementById('modelStatus');
+                statusEl.innerHTML = `Active Brain: <span style="color: ${data.isPro ? '#a78bfa' : '#888'}">${data.model}</span>`;
+                statusEl.style.borderColor = data.isPro ? '#a78bfa33' : 'var(--border)';
+            } catch (e) {
+                document.getElementById('modelStatus').innerText = "AI Offline";
+            }
+        }
+
         async function deleteTask(id) {
             if (!confirm(`Delete task #${id}?`)) return;
             await fetch(`${API}/tasks/${id}`, { method: 'DELETE' });
             loadTasks();
+            checkStatus();
         }
 
 
-
+        checkStatus();
         loadTasks();
     </script>
 </body>

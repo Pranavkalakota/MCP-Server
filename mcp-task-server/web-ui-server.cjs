@@ -129,6 +129,11 @@ async function start() {
     });
 
     const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
+    const modelName = openai ? OPENAI_MODEL : "Local Standard Engine";
+
+    app.get('/status', (req, res) => {
+        res.json({ model: modelName, isPro: !!openai });
+    });
 
     app.post('/chat', async (req, res) => {
         const { message, lastResponse } = req.body;
@@ -195,8 +200,7 @@ async function start() {
         }
 
         console.log("AI CHAT: Using Local NLP Fallback");
-        const fallbackPrefix = "[Mode: Local Standard Engine] ";
-        const modelName = "Local Standard Engine";
+        const fallbackPrefix = `[Mode: ${modelName}] `;
 
         // Fuzzy Match Regex Patterns (Handles repeated letters like adddd, delet, removvve)
         const addRegex = /\b(a+d+s?|c+r+e+a+t+e+|m+a+k+e+|n+e+w+)\b/i;
