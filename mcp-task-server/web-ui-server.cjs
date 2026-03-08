@@ -167,27 +167,27 @@ async function start() {
                     await run("INSERT INTO tasks (title, priority) VALUES (?, ?)", [gpt.title || message, "medium"]);
                     await pushHistory("delete", { title: gpt.title || message });
                     await syncIds();
-                    return res.json({ response: `${prefix}Added: "${gpt.title || message}"` });
+                    return res.json({ response: `${prefix}Added: "${gpt.title || message}"`, model: OPENAI_MODEL });
                 }
-                else if (gpt.action === "ask_confirmation") return res.json({ response: `${prefix}${gpt.message}` });
+                else if (gpt.action === "ask_confirmation") return res.json({ response: `${prefix}${gpt.message}`, model: OPENAI_MODEL });
                 else if (gpt.action === "delete" && gpt.id) {
                     const task = await db.get("SELECT * FROM tasks WHERE id = ?", [gpt.id]);
                     if (task) await pushHistory("add", task);
                     await run("DELETE FROM tasks WHERE id = ?", [gpt.id]);
                     await syncIds();
-                    return res.json({ response: `${prefix}Success! Task #${gpt.id} deleted.` });
+                    return res.json({ response: `${prefix}Success! Task #${gpt.id} deleted.`, model: OPENAI_MODEL });
                 }
                 else if (gpt.action === "undo") {
                     const resText = await performHistoryAction(true);
-                    return res.json({ response: resText ? `${prefix}Undone! ${resText}.` : `${prefix}Nothing to undo.` });
+                    return res.json({ response: resText ? `${prefix}Undone! ${resText}.` : `${prefix}Nothing to undo.`, model: OPENAI_MODEL });
                 }
                 else if (gpt.action === "redo") {
                     const resText = await performHistoryAction(false);
-                    return res.json({ response: resText ? `${prefix}Redone! ${resText}.` : `${prefix}Nothing to redo."` });
+                    return res.json({ response: resText ? `${prefix}Redone! ${resText}.` : `${prefix}Nothing to redo."`, model: OPENAI_MODEL });
                 }
-                else if (gpt.action === "message") return res.json({ response: `${prefix}${gpt.message}` });
+                else if (gpt.action === "message") return res.json({ response: `${prefix}${gpt.message}`, model: OPENAI_MODEL });
 
-                return res.json({ response: `${prefix}I'm not sure how to help. Try 'add lunch'.` });
+                return res.json({ response: `${prefix}I'm not sure how to help. Try 'add lunch'.`, model: OPENAI_MODEL });
             } catch (err) {
                 console.error(`OpenAI Error (${OPENAI_MODEL}):`, err.message);
                 // Fall through to local NLP
@@ -196,6 +196,7 @@ async function start() {
 
         console.log("AI CHAT: Using Local NLP Fallback");
         const fallbackPrefix = "[Mode: Local Standard Engine] ";
+        const modelName = "Local Standard Engine";
 
         // Fuzzy Match Regex Patterns (Handles repeated letters like adddd, delet, removvve)
         const addRegex = /\b(a+d+s?|c+r+e+a+t+e+|m+a+k+e+|n+e+w+)\b/i;
@@ -212,18 +213,18 @@ async function start() {
                 if (task) await pushHistory("add", task);
                 await run("DELETE FROM tasks WHERE id = ?", [targetId]);
                 await syncIds();
-                return res.json({ response: `${fallbackPrefix}Confirmed. Task #${targetId} removed.` });
+                return res.json({ response: `${fallbackPrefix}Confirmed. Task #${targetId} removed.`, model: modelName });
             }
         }
 
         // 2. Undo/Redo (Fuzzy)
         if (undoRegex.test(msg)) {
             const resText = await performHistoryAction(true);
-            return res.json({ response: resText ? `${fallbackPrefix}Undone! ${resText}.` : `${fallbackPrefix}Nothing to undo.` });
+            return res.json({ response: resText ? `${fallbackPrefix}Undone! ${resText}.` : `${fallbackPrefix}Nothing to undo.`, model: modelName });
         }
         if (redoRegex.test(msg)) {
             const resText = await performHistoryAction(false);
-            return res.json({ response: resText ? `${fallbackPrefix}Redone! ${resText}.` : `${fallbackPrefix}Nothing to redo.` });
+            return res.json({ response: resText ? `${fallbackPrefix}Redone! ${resText}.` : `${fallbackPrefix}Nothing to redo.`, model: modelName });
         }
 
         // 3. Delete (Fuzzy & Keywords)
@@ -255,13 +256,13 @@ async function start() {
             }
 
             if (targetId && targetTitle) {
-                return res.json({ response: `${fallbackPrefix}Please confirm you want to delete task #${targetId} ("${targetTitle}")? (Yes/No)` });
+                return res.json({ response: `${fallbackPrefix}Please confirm you want to delete task #${targetId} ("${targetTitle}")? (Yes/No)`, model: modelName });
             }
         }
 
         // 4. List Check
         if (msg.includes("list") || msg.includes("show") || msg.includes("tasks")) {
-            return res.json({ response: `${fallbackPrefix}You have ${tasks.length} task(s).` });
+            return res.json({ response: `${fallbackPrefix}You have ${tasks.length} task(s).`, model: modelName });
         }
 
         // 5. Default to Add (Fuzzy cleaning of title)
@@ -278,7 +279,7 @@ async function start() {
         await run("INSERT INTO tasks (title) VALUES (?)", [title]);
         await pushHistory("delete", { title });
         await syncIds();
-        return res.json({ response: `${fallbackPrefix}Added task: "${title}"` });
+        return res.json({ response: `${fallbackPrefix}Added task: "${title}"`, model: modelName });
     });
 
 

@@ -212,13 +212,16 @@
         // Chat functionality
         let lastAssistantMessage = "";
 
-        function appendChat(text, isUser = false) {
+        function appendChat(text, isUser = false, model = "") {
             const chatOutput = document.getElementById('chatOutput');
             const msg = document.createElement('div');
             msg.className = `chat-message ${isUser ? 'user-message' : 'bot-message'}`;
+
+            const label = isUser ? 'User' : `Assistant ${model ? `[${model}]` : ''}`;
+
             msg.innerHTML = `
                 <div style="font-size: 0.7rem; opacity: 0.7; margin-bottom: 4px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.05em;">
-                    ${isUser ? 'User' : 'Assistant'}
+                    ${label}
                 </div>
                 <div>${text}</div>
             `;
@@ -242,7 +245,7 @@
                     body: JSON.stringify({ message: text, lastResponse: lastAssistantMessage })
                 });
                 const data = await res.json();
-                appendChat(data.response);
+                appendChat(data.response, false, data.model);
                 loadTasks(); // Always reload tasks after a chat action
             } catch (e) {
                 appendChat("Failed to reach server.");
