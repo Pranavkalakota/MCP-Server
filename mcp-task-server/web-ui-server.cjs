@@ -52,6 +52,10 @@ async function start() {
         db.run(query, params, function (err) { err ? reject(err) : resolve(this); });
     });
 
+    const get = (query, params = []) => new Promise((resolve, reject) => {
+        db.get(query, params, (err, row) => err ? reject(err) : resolve(row));
+    });
+
     // Helper to re-sequence IDs to match 1, 2, 3...
     const syncIds = async () => {
         const rows = await all("SELECT * FROM tasks ORDER BY id ASC");
@@ -118,7 +122,7 @@ async function start() {
     app.delete('/tasks/:id', async (req, res) => {
         const { id } = req.params;
         try {
-            const task = await db.get("SELECT * FROM tasks WHERE id = ?", [id]);
+            const task = await get("SELECT * FROM tasks WHERE id = ?", [id]);
             if (task) await pushHistory("add", task);
             await run("DELETE FROM tasks WHERE id = ?", [id]);
             await syncIds();
@@ -138,8 +142,28 @@ async function start() {
     app.post('/chat', async (req, res) => {
         const { message, lastResponse } = req.body;
         const msg = (message || "").toLowerCase();
-
         const tasks = await all("SELECT * FROM tasks ORDER BY id ASC");
+        const prefix = openai ? `[Mode: ${OPENAI_MODEL}] ` : `[Mode: ${modelName}] `;
+
+        // --- GLOBAL CONFIRMATION HANDLER (Runs before ANY AI/NLP logic) ---
+        // If the user says "yes" to a confirmation prompt, we handle it strictly based on the ID in that prompt.
+        const confirmationWords = ["yes", "do it", "confirm", "yea", "yup", "sure", "ok"];
+        if (confirmationWords.includes(msg) && lastResponse && (lastResponse.includes("confirm you want to delete") || lastResponse.includes("confirm you want to remove"))) {
+            const idMatch = lastResponse.match(/#(\d+)/);
+            if (idMatch) {
+                const targetId = parseInt(idMatch[1]);
+                const task = await get("SELECT * FROM tasks WHERE id = ?", [targetId]);
+                if (task) {
+                    const deletedTitle = task.title; // Capture title before deletion
+                    await pushHistory("add", task);
+                    await run("DELETE FROM tasks WHERE id = ?", [targetId]);
+                    await syncIds();
+                    return res.json({ response: `${prefix}Confirmed. Success! Removed Task #${targetId} ("${deletedTitle}").`, model: modelName });
+                } else {
+                    return res.json({ response: `${prefix}Wait, I can't find Task #${targetId} anymore. Did it get deleted already?`, model: modelName });
+                }
+            }
+        }
 
         if (openai) {
             console.log(`AI CHAT: Using Pro Mode (${OPENAI_MODEL})`);
@@ -155,10 +179,17 @@ async function start() {
                             
                             LAST RESPONSE: "${lastResponse || "None"}"
 
-                            INSTRUCTIONS:
-                            1. TYPO TOLERANCE: Be flexible (e.g., "adddd", "undooo").
-                            2. MODE: You are running on ${OPENAI_MODEL}.
-                            3. Return strictly JSON: { "action": "add"|"delete"|"ask_confirmation"|"undo"|"redo"|"message", "id": ..., "title": "...", "message": "..." }`
+                            CURRENT DATABASE SNAPSHOT (IDs):
+                            ${tasks.map(t => `#${t.id}: "${t.title}"`).join(', ') || "EMPTY"}
+                            
+                            LAST_ID_ADDED: ${tasks.length > 0 ? tasks[tasks.length - 1].id : "None"}
+
+                            STRICT AI RULES:
+                            1. DO NOT SIMULATE SUCCESS. If you want to delete/undo/redo, return the ACTION name. The system will create the "Success" message after the DB actually updates.
+                            2. NO HALLUCINATIONS: Do not refer to IDs that are not in the SNAPSHOT above.
+                            3. CONTEXT: "Delete last" always means Target ID: ${tasks.length > 0 ? tasks[tasks.length - 1].id : "None"}.
+                            4. TYPO TOLERANCE: Treat "adddd" as "add", etc.
+                            5. RETURN JSON ONLY: { "action": "add"|"delete"|"ask_confirmation"|"undo"|"redo"|"message", "id": number|null, "title": "string"|null, "message": "string"|null }`
                         },
                         { role: "user", content: message }
                     ],
@@ -169,57 +200,49 @@ async function start() {
                 const prefix = `[Mode: ${OPENAI_MODEL}] `;
 
                 if (gpt.action === "add") {
-                    await run("INSERT INTO tasks (title, priority) VALUES (?, ?)", [gpt.title || message, "medium"]);
-                    await pushHistory("delete", { title: gpt.title || message });
+                    const title = gpt.title || message;
+                    await run("INSERT INTO tasks (title, priority) VALUES (?, ?)", [title, "medium"]);
+                    await pushHistory("delete", { title });
                     await syncIds();
-                    return res.json({ response: `${prefix}Added: "${gpt.title || message}"`, model: OPENAI_MODEL });
+                    return res.json({ response: `${prefix}Added task: "${title}"`, model: OPENAI_MODEL });
                 }
-                else if (gpt.action === "ask_confirmation") return res.json({ response: `${prefix}${gpt.message}`, model: OPENAI_MODEL });
-                else if (gpt.action === "delete" && gpt.id) {
-                    const task = await db.get("SELECT * FROM tasks WHERE id = ?", [gpt.id]);
-                    if (task) await pushHistory("add", task);
-                    await run("DELETE FROM tasks WHERE id = ?", [gpt.id]);
+                else if (gpt.action === "ask_confirmation" || gpt.action === "message") {
+                    return res.json({ response: `${prefix}${gpt.message}`, model: OPENAI_MODEL });
+                }
+                else if (gpt.action === "delete") {
+                    // Logic override for "delete last" or hallucinated IDs
+                    let targetId = gpt.id;
+                    const lastKeywords = ["last", "latest", "recent", "just added", "just made"];
+                    if (lastKeywords.some(k => message.toLowerCase().includes(k)) && tasks.length > 0) {
+                        targetId = tasks[tasks.length - 1].id;
+                    }
+
+                    if (!targetId) return res.json({ response: `${prefix}Which task should I delete? Use the ID or name.`, model: OPENAI_MODEL });
+
+                    const task = await get("SELECT * FROM tasks WHERE id = ?", [targetId]);
+                    if (!task) return res.json({ response: `${prefix}Error: Task #${targetId} does not exist in the database.`, model: OPENAI_MODEL });
+
+                    await pushHistory("add", task);
+                    await run("DELETE FROM tasks WHERE id = ?", [targetId]);
                     await syncIds();
-                    return res.json({ response: `${prefix}Success! Task #${gpt.id} deleted.`, model: OPENAI_MODEL });
+                    return res.json({ response: `${prefix}Success! Removed Task #${targetId} ("${task.title}").`, model: OPENAI_MODEL });
                 }
-                else if (gpt.action === "undo") {
-                    const resText = await performHistoryAction(true);
-                    return res.json({ response: resText ? `${prefix}Undone! ${resText}.` : `${prefix}Nothing to undo.`, model: OPENAI_MODEL });
-                }
-                else if (gpt.action === "redo") {
-                    const resText = await performHistoryAction(false);
-                    return res.json({ response: resText ? `${prefix}Redone! ${resText}.` : `${prefix}Nothing to redo."`, model: OPENAI_MODEL });
-                }
-                else if (gpt.action === "message") return res.json({ response: `${prefix}${gpt.message}`, model: OPENAI_MODEL });
 
                 return res.json({ response: `${prefix}I'm not sure how to help. Try 'add lunch'.`, model: OPENAI_MODEL });
             } catch (err) {
                 console.error(`OpenAI Error (${OPENAI_MODEL}):`, err.message);
-                // Fall through to local NLP
+                // Fall through to local NLP logic below
             }
         }
 
         console.log("AI CHAT: Using Local NLP Fallback");
         const fallbackPrefix = `[Mode: ${modelName}] `;
 
-        // Fuzzy Match Regex Patterns (Handles repeated letters like adddd, delet, removvve)
+        // Fuzzy Match Regex Patterns (Handles repeated letters)
         const addRegex = /\b(a+d+s?|c+r+e+a+t+e+|m+a+k+e+|n+e+w+)\b/i;
         const deleteRegex = /\b(d+e+l+e+t+e+|r+e+m+o+v+e+|c+l+e+a+r+|t+a+k+e+\s+o+u+t+|d+e+l+)\b/i;
         const undoRegex = /\b(u+n+d+o+|r+e+v+e+r+t+|o+o+p+s+)\b/i;
         const redoRegex = /\b(r+e+d+o+|b+r+i+n+g+\s+b+a+c+k+)\b/i;
-
-        // 1. Check for Confirmation
-        if ((msg === "yes" || msg === "do it" || msg === "confirm" || msg === "yea") && lastResponse.includes("confirm you want to delete")) {
-            const idMatch = lastResponse.match(/\d+/);
-            if (idMatch) {
-                const targetId = parseInt(idMatch[0]);
-                const task = await db.get("SELECT * FROM tasks WHERE id = ?", [targetId]);
-                if (task) await pushHistory("add", task);
-                await run("DELETE FROM tasks WHERE id = ?", [targetId]);
-                await syncIds();
-                return res.json({ response: `${fallbackPrefix}Confirmed. Task #${targetId} removed.`, model: modelName });
-            }
-        }
 
         // 2. Undo/Redo (Fuzzy)
         if (undoRegex.test(msg)) {
@@ -235,8 +258,10 @@ async function start() {
         if (deleteRegex.test(msg) && !addRegex.test(msg)) {
             let targetId = null;
             let targetTitle = "";
+            const lastKeywords = ["last", "latest", "recent", "just made", "just added"];
+            const isLastRequest = lastKeywords.some(k => msg.includes(k));
 
-            if (msg.includes("last") || msg.includes("just made") || msg.includes("just added")) {
+            if (isLastRequest) {
                 if (tasks.length > 0) {
                     const lastTask = tasks[tasks.length - 1];
                     targetId = lastTask.id;
@@ -250,7 +275,10 @@ async function start() {
                     targetTitle = t ? t.title : null;
                 } else {
                     for (const t of tasks) {
-                        if (msg.includes(t.title.toLowerCase())) {
+                        const titleLower = t.title.toLowerCase();
+                        const escapedTitle = titleLower.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                        const titleRegex = new RegExp(`\\b${escapedTitle}\\b`, 'i');
+                        if (titleRegex.test(msg)) {
                             targetId = t.id;
                             targetTitle = t.title;
                             break;
@@ -269,12 +297,10 @@ async function start() {
             return res.json({ response: `${fallbackPrefix}You have ${tasks.length} task(s).`, model: modelName });
         }
 
-        // 5. Default to Add (Fuzzy cleaning of title)
+        // 5. Default to Add
         let title = message;
         if (addRegex.test(msg)) {
-            // Remove the fuzzy matches from the title
             title = message.replace(new RegExp(addRegex.source, 'gi'), "").trim();
-            // Clean up helper words
             title = title.replace(/\b(task|to|remind|me|a|an)\b/gi, "").trim();
             title = title.replace(/^[^a-zA-Z0-9]+|[^a-zA-Z0-9]+$/g, '').trim();
         }
