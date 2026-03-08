@@ -2,9 +2,10 @@
 // MCP Task Manager Server — CS 290 Final Challenge
 // Team Members: Pranav Kalakota
 // ============================================================
-// Two tools:
-//   1. add_task  — Create a task (title, description, priority, due date)
-//   2. get_tasks — Filter/search tasks by status, priority, or keyword
+// Three tools:
+//   1. add_task    — Create a task (title, description, priority, due date)
+//   2. get_tasks   — Filter/search tasks by status, priority, or keyword
+//   3. delete_task — Delete a task by ID or Title
 //
 // Storage: SQLite (sql.js)  |  Transport: stdio
 // ============================================================
@@ -200,6 +201,33 @@ server.tool(
     }
 );
 
+// ──────────── Tool 3: delete_task ────────────
+
+server.tool(
+    "delete_task",
+    "Delete a task. You can specify the task ID or the exact title.",
+    {
+        id: z.number().optional().describe("Internal task ID"),
+        title: z.string().optional().describe("Exact title of the task to delete"),
+    },
+    async ({ id, title }) => {
+        if (id !== undefined) {
+            db.run(`DELETE FROM tasks WHERE id = ?`, [id]);
+        } else if (title !== undefined) {
+            db.run(`DELETE FROM tasks WHERE title = ?`, [title]);
+        } else {
+            return {
+                content: [{ type: "text" as const, text: "Error: You must provide either an 'id' or a 'title'." }],
+                isError: true,
+            };
+        }
+        saveDb();
+        return {
+            content: [{ type: "text" as const, text: `Successfully deleted task(s) matching ${id ? `ID ${id}` : `title "${title}"`}.` }],
+        };
+    }
+);
+
 // ———————————————— Start Server ————————————————
 
 async function startWebServer(): Promise<void> {
@@ -223,6 +251,13 @@ async function startWebServer(): Promise<void> {
             `INSERT INTO tasks (title, description, priority, due_date) VALUES (?, ?, ?, ?)`,
             [title, description || "", priority || "medium", due_date || null]
         );
+        saveDb();
+        res.json({ success: true });
+    });
+
+    app.delete("/tasks/:id", (req, res) => {
+        const { id } = req.params;
+        db.run(`DELETE FROM tasks WHERE id = ?`, [id]);
         saveDb();
         res.json({ success: true });
     });

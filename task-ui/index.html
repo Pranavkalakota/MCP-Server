@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -64,7 +65,8 @@
             margin-bottom: 20px;
         }
 
-        input, select {
+        input,
+        select {
             background: rgba(255, 255, 255, 0.05);
             border: 1px solid var(--border);
             border-radius: 12px;
@@ -75,7 +77,9 @@
             transition: 0.3s;
         }
 
-        input:focus { border-color: var(--accent); }
+        input:focus {
+            border-color: var(--accent);
+        }
 
         button {
             background: var(--accent);
@@ -88,7 +92,9 @@
             transition: 0.3s transform;
         }
 
-        button:hover { transform: translateY(-2px); }
+        button:hover {
+            transform: translateY(-2px);
+        }
 
         .task-list {
             display: flex;
@@ -120,13 +126,29 @@
             font-weight: 600;
         }
 
-        .prio-low { background: rgba(52, 211, 153, 0.1); color: var(--low); }
-        .prio-medium { background: rgba(251, 191, 36, 0.1); color: var(--medium); }
-        .prio-high { background: rgba(248, 113, 113, 0.1); color: var(--high); }
+        .prio-low {
+            background: rgba(52, 211, 153, 0.1);
+            color: var(--low);
+        }
 
-        .task-meta { font-size: 0.85rem; color: #888; margin-top: 5px; }
+        .prio-medium {
+            background: rgba(251, 191, 36, 0.1);
+            color: var(--medium);
+        }
+
+        .prio-high {
+            background: rgba(248, 113, 113, 0.1);
+            color: var(--high);
+        }
+
+        .task-meta {
+            font-size: 0.85rem;
+            color: #888;
+            margin-top: 5px;
+        }
     </style>
 </head>
+
 <body>
     <div class="container">
         <header>
@@ -147,6 +169,14 @@
             <button onclick="addTask()" style="width: 100%">+ ADD TASK</button>
         </div>
 
+        <div class="card">
+            <div style="display: flex; gap: 15px;">
+                <input type="text" id="deleteInput" placeholder="Enter ID or Exact Title to Delete"
+                    style="flex-grow: 1">
+                <button onclick="deleteTypedTask()" style="background: var(--high)">DELETE</button>
+            </div>
+        </div>
+
         <div id="taskList" class="task-list">
             <!-- Tasks will appear here -->
         </div>
@@ -160,15 +190,21 @@
                 const res = await fetch(`${API}/tasks`);
                 const tasks = await res.json();
                 const list = document.getElementById('taskList');
-                list.innerHTML = tasks.map(t => `
+                list.innerHTML = tasks.sort((a, b) => b.id - a.id).map(t => `
                     <div class="task-item">
-                        <div>
-                            <div style="font-weight: 600; font-size: 1.1rem">${t.title}</div>
+                        <div style="flex-grow: 1">
+                            <div style="font-weight: 600; font-size: 1.1rem">
+                                <span style="color: #666; font-size: 0.8rem; margin-right: 8px;">#${t.id}</span>
+                                ${t.title}
+                            </div>
                             <div class="task-meta">
                                 Due: ${t.due_date || 'No date'} • Created: ${t.created_at.split(' ')[0]}
                             </div>
                         </div>
-                        <span class="priority-badge prio-${t.priority}">${t.priority}</span>
+                        <div style="display: flex; align-items: center; gap: 15px;">
+                            <span class="priority-badge prio-${t.priority}">${t.priority}</span>
+                            <button onclick="deleteTask(${t.id})" style="background: none; border: 1px solid rgba(248, 113, 113, 0.3); color: var(--high); padding: 5px 10px; font-size: 0.8rem;">✕</button>
+                        </div>
                     </div>
                 `).join('');
             } catch (e) {
@@ -185,7 +221,7 @@
 
             await fetch(`${API}/tasks`, {
                 method: 'POST',
-                headers: {'Content-Type': 'application/json'},
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ title, priority, due_date })
             });
 
@@ -193,7 +229,38 @@
             loadTasks();
         }
 
+        async function deleteTask(id) {
+            if (!confirm(`Delete task #${id}?`)) return;
+            await fetch(`${API}/tasks/${id}`, { method: 'DELETE' });
+            loadTasks();
+        }
+
+        async function deleteTypedTask() {
+            const input = document.getElementById('deleteInput').value;
+            if (!input) return;
+
+            // If it's a number, delete by ID, else it's a title
+            if (!isNaN(input)) {
+                await fetch(`${API}/tasks/${input}`, { method: 'DELETE' });
+            } else {
+                // If the user wants to delete by exact title via web, we can do a quick GET to find ID or just use a special endpoint. 
+                // For simplicity, let's assume they might mean either ID or title.
+                // We'll just try to find the task first.
+                const res = await fetch(`${API}/tasks`);
+                const tasks = await res.json();
+                const task = tasks.find(t => t.title === input);
+                if (task) {
+                    await fetch(`${API}/tasks/${task.id}`, { method: 'DELETE' });
+                } else {
+                    alert("Task not found with that title/ID");
+                }
+            }
+            document.getElementById('deleteInput').value = '';
+            loadTasks();
+        }
+
         loadTasks();
     </script>
 </body>
+
 </html>

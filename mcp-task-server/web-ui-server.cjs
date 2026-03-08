@@ -41,8 +41,16 @@ async function start() {
         res.json({ success: true });
     });
 
-    app.listen(3005, () => {
-        console.log("Web API running on http://localhost:3005");
+    app.delete('/tasks/:id', (req, res) => {
+        console.log("DELETE /tasks/", req.params.id);
+        const { id } = req.params;
+        db.run("DELETE FROM tasks WHERE id = ?", [id]);
+        fs.writeFileSync(DB_PATH, Buffer.from(db.export()));
+        res.json({ success: true });
+    });
+
+    app.listen(3000, () => {
+        console.log("Web API running on http://localhost:3000");
     });
 }
 
