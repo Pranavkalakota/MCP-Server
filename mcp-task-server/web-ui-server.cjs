@@ -1,6 +1,6 @@
 const express = require('express');
 const cors = require('cors');
-const initSqlJs = require('sql.js');
+const sqlite3 = require('sqlite3').verbose();
 const fs = require('fs');
 const path = require('path');
 require('dotenv').config();
@@ -13,50 +13,89 @@ const openai = process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY.startsWi
 const DB_PATH = path.join(__dirname, 'tasks.db');
 
 async function start() {
-    console.log("Initializing SQL.js...");
-    const SQL = await initSqlJs();
-    let db;
-    if (fs.existsSync(DB_PATH)) {
-        db = new SQL.Database(fs.readFileSync(DB_PATH));
-        console.log("Loaded DB");
-    } else {
-        db = new SQL.Database();
-        console.log("New DB");
-    }
+    console.log("Connecting to Native SQLite database...");
+    const db = new sqlite3.Database(DB_PATH, (err) => {
+        if (err) console.error("Database error:", err.message);
+        else {
+            console.log("Connected to local SQLite database.");
+            // Automatically initialize the table for new users (professors, TAs, etc.)
+            db.exec(`
+                CREATE TABLE IF NOT EXISTS tasks (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    title       TEXT    NOT NULL,
+                    description TEXT    DEFAULT '',
+                    priority    TEXT    CHECK(priority IN ('low','medium','high')) DEFAULT 'medium',
+                    status      TEXT    CHECK(status IN ('todo','in_progress','done')) DEFAULT 'todo',
+                    due_date    TEXT    DEFAULT NULL,
+                    created_at  TEXT    DEFAULT (datetime('now')),
+                    updated_at  TEXT    DEFAULT (datetime('now'))
+                );
+            `);
+        }
+    });
 
     const app = express();
     app.use(cors());
     app.use(express.json());
 
-    app.get('/tasks', (req, res) => {
-        console.log("GET /tasks");
-        const result = db.exec("SELECT * FROM tasks");
-        if (!result.length) return res.json([]);
-        const cols = result[0].columns;
-        const tasks = result[0].values.map(row =>
-            Object.fromEntries(cols.map((c, i) => [c, row[i]]))
-        );
-        res.json(tasks);
+    const all = (query, params = []) => new Promise((resolve, reject) => {
+        db.all(query, params, (err, rows) => err ? reject(err) : resolve(rows));
     });
 
-    app.post('/tasks', (req, res) => {
-        console.log("POST /tasks", req.body);
+    const run = (query, params = []) => new Promise((resolve, reject) => {
+        db.run(query, params, function (err) { err ? reject(err) : resolve(this); });
+    });
+
+    // Helper to re-sequence IDs to match 1, 2, 3...
+    const syncIds = async () => {
+        const rows = await all("SELECT * FROM tasks ORDER BY id ASC");
+        // Clear all tasks
+        await run("DELETE FROM tasks");
+        // Reset the auto-increment counter
+        await run("DELETE FROM sqlite_sequence WHERE name='tasks'");
+        // Re-insert tasks with fresh sequential IDs
+        for (const t of rows) {
+            await run("INSERT INTO tasks (title, description, priority, status, due_date, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                [t.title, t.description, t.priority, t.status, t.due_date, t.created_at]);
+        }
+    };
+
+    app.get('/tasks', async (req, res) => {
+        try {
+            const rows = await all("SELECT * FROM tasks ORDER BY id ASC");
+            res.json(rows);
+        } catch (err) {
+            res.status(500).json({ error: err.message });
+        }
+    });
+
+    app.post('/tasks', async (req, res) => {
         const { title, priority, due_date } = req.body;
-        db.run("INSERT INTO tasks (title, priority, due_date) VALUES (?, ?, ?)", [title, priority, due_date]);
-        fs.writeFileSync(DB_PATH, Buffer.from(db.export()));
-        res.json({ success: true });
+        try {
+            await run("INSERT INTO tasks (title, priority, due_date) VALUES (?, ?, ?)", [title, priority, due_date]);
+            await syncIds(); // Keep IDs 1, 2, 3...
+            res.json({ success: true });
+        } catch (err) {
+            res.status(500).json({ error: err.message });
+        }
     });
 
-    app.delete('/tasks/:id', (req, res) => {
-        console.log("DELETE /tasks/", req.params.id);
+    app.delete('/tasks/:id', async (req, res) => {
         const { id } = req.params;
-        db.run("DELETE FROM tasks WHERE id = ?", [id]);
-        fs.writeFileSync(DB_PATH, Buffer.from(db.export()));
-        res.json({ success: true });
+        try {
+            await run("DELETE FROM tasks WHERE id = ?", [id]);
+            await syncIds(); // Re-sequence after deletion
+            res.json({ success: true });
+        } catch (err) {
+            res.status(500).json({ error: err.message });
+        }
     });
 
     app.post('/chat', async (req, res) => {
-        const query = (req.body.message || "").toLowerCase();
+        const { message, lastResponse } = req.body;
+        const msg = (message || "").toLowerCase();
+
+        const tasks = await all("SELECT * FROM tasks ORDER BY id ASC");
 
         if (openai) {
             try {
@@ -65,87 +104,102 @@ async function start() {
                     messages: [
                         {
                             role: "system",
-                            content: "You are a task routing assistant. The user will ask you to manage tasks. Decide which action to take: 'add', 'delete', or 'list'. Return your decision strictly as a JSON object like { \"action\": \"add\", \"title\": \"Walk dog\", \"priority\": \"high\" }. If they want to delete, return { \"action\": \"delete\", \"id\": 5 }. If they want to list, return { \"action\": \"list\" }."
+                            content: `You are a task routing assistant.
+                            CURRENT TASKS:
+                            ${tasks.map(t => `- [ID: ${t.id}] "${t.title}"`).join('\n') || "None"}
+                            
+                            LAST RESPONSE: "${lastResponse || "None"}"
+
+                            INSTRUCTIONS:
+                            1. FOR DELETION: You MUST use "ask_confirmation" first unless the user is explicitly confirming (e.g. "yes", "do it") a specific task you just asked about.
+                            2. CONTEXTUAL DELETE: If they say "delete the last task" or "task you just made", target the one with the HIGHEST ID.
+                            3. Return strictly JSON: { "action": "add"|"delete"|"ask_confirmation"|"message", "id": ..., "title": "...", "message": "..." }`
                         },
-                        {
-                            role: "user",
-                            content: query
-                        }
+                        { role: "user", content: message }
                     ],
                     response_format: { type: "json_object" }
                 });
 
-                const gptDecision = JSON.parse(completion.choices[0].message.content);
+                const gpt = JSON.parse(completion.choices[0].message.content);
 
-                if (gptDecision.action === "add") {
-                    const priority = gptDecision.priority || "medium";
-                    const title = gptDecision.title || "Untitled Task";
-                    const due_date = gptDecision.due_date || null;
-                    db.run("INSERT INTO tasks (title, priority, due_date) VALUES (?, ?, ?)", [title, priority, due_date]);
-                    fs.writeFileSync(DB_PATH, Buffer.from(db.export()));
-                    return res.json({ response: `Success! Added task: "${title}"` });
+                if (gpt.action === "add") {
+                    await run("INSERT INTO tasks (title, priority) VALUES (?, ?)", [gpt.title || "New Task", "medium"]);
+                    await syncIds();
+                    return res.json({ response: `Added: "${gpt.title}"` });
                 }
-                else if (gptDecision.action === "delete") {
-                    if (gptDecision.id) {
-                        db.run("DELETE FROM tasks WHERE id = ?", [gptDecision.id]);
-                        fs.writeFileSync(DB_PATH, Buffer.from(db.export()));
-                        return res.json({ response: `Success! Deleted task #${gptDecision.id}.` });
+                else if (gpt.action === "ask_confirmation") return res.json({ response: gpt.message });
+                else if (gpt.action === "delete" && gpt.id) {
+                    await run("DELETE FROM tasks WHERE id = ?", [gpt.id]);
+                    await syncIds();
+                    return res.json({ response: `Success! Task #${gpt.id} deleted. IDs re-synchronized.` });
+                }
+                else if (gpt.action === "message") return res.json({ response: gpt.message });
+            } catch (err) {
+                console.error("OpenAI Fallback:", err.message);
+            }
+        }
+
+        // --- SECURE FALLBACK NLP (Confirmation & Contextual) ---
+
+        // Check for confirmation of previous question
+        if ((msg === "yes" || msg === "do it" || msg === "confirm") && lastResponse.includes("confirm you want to delete")) {
+            const idMatch = lastResponse.match(/\d+/);
+            if (idMatch) {
+                const targetId = parseInt(idMatch[0]);
+                await run("DELETE FROM tasks WHERE id = ?", [targetId]);
+                await syncIds();
+                return res.json({ response: `Confirmed. Task #${targetId} removed.` });
+            }
+        }
+
+        if (msg.includes("delete") || msg.includes("remove") || msg.includes("clear")) {
+            let targetId = null;
+            let targetTitle = "";
+
+            // Handle "last task" or "just made"
+            if (msg.includes("last") || msg.includes("just made") || msg.includes("just added")) {
+                if (tasks.length > 0) {
+                    const lastTask = tasks[tasks.length - 1];
+                    targetId = lastTask.id;
+                    targetTitle = lastTask.title;
+                }
+            } else {
+                const idMatch = msg.match(/\b\d+\b/);
+                if (idMatch) {
+                    targetId = parseInt(idMatch[0]);
+                    const t = tasks.find(x => x.id === targetId);
+                    targetTitle = t ? t.title : `Task #${targetId}`;
+                } else {
+                    for (const t of tasks) {
+                        if (msg.includes(t.title.toLowerCase())) {
+                            targetId = t.id;
+                            targetTitle = t.title;
+                            break;
+                        }
                     }
                 }
-                else if (gptDecision.action === "list") {
-                    const result = db.exec("SELECT * FROM tasks");
-                    if (!result.length) return res.json({ response: "You have no active tasks matching this query." });
-                    return res.json({ response: `You currently have ${result[0].values.length} active task(s).` });
-                }
-                return res.json({ response: "I'm not exactly sure what to do with that." });
-            } catch (err) {
-                console.error("OpenAI Error (Falling back to local NLP):", err.message);
-                // We don't return here anymore—we just let it fall through to the fallback logic below!
             }
-        }
 
-        // --- FALLBACK NLP LOGIC (if no valid API key) ---
-        // 1. DELETE INTENT
-        if (query.includes("delete") || query.includes("remove") || query.includes("cancel")) {
-            const match = query.match(/(?:task\s+)?#?(\d+)/i);
-            if (match) {
-                const id = parseInt(match[1]);
-                db.run("DELETE FROM tasks WHERE id = ?", [id]);
-                fs.writeFileSync(DB_PATH, Buffer.from(db.export()));
-                return res.json({ response: `Success! Deleted task #${id}.` });
-            } else {
-                return res.json({ response: "Which task ID would you like me to delete? (e.g., 'delete 5')" });
+            if (targetId) {
+                return res.json({ response: `Please confirm you want to delete task #${targetId} ("${targetTitle}")? (Yes/No)` });
             }
+            return res.json({ response: "I couldn't find that task. Try 'delete 1' or 'delete the last task'." });
         }
 
-        // 2. READ INTENT
-        if (query.includes("list") || query.includes("show") || query.includes("get") || query.includes("view")) {
-            const result = db.exec("SELECT * FROM tasks");
-            if (!result.length) return res.json({ response: "You have no active tasks matching this query." });
-            return res.json({ response: `You currently have ${result[0].values.length} active task(s).` });
-        }
-
-        // 3. CREATE INTENT
-        if (query.includes("add") || query.includes("create") || query.includes("new") || query.includes("remind")) {
-            let priority = "medium";
-            if (query.includes("high") || query.includes("urgent")) priority = "high";
-            if (query.includes("low") || query.includes("whenever")) priority = "low";
-
-            let due_date = null;
-            const dateMatch = query.match(/\d{4}-\d{2}-\d{2}/);
-            if (dateMatch) due_date = dateMatch[0];
-
-            let title = req.body.message.replace(/(add|create|make|a|new|task|to|remind|me|high|medium|low|urgent|priority|due|on|date|\d{4}-\d{2}-\d{2})/gi, "").trim();
+        if (msg.includes("add") || msg.includes("create") || msg.includes("new")) {
+            let title = message.replace(/\b(add|create|make|new|task|to|remind|me|a|an)\b/gi, "").trim();
             title = title.replace(/^[^a-zA-Z0-9]+|[^a-zA-Z0-9]+$/g, '').trim();
-            if (!title) title = "Untitled Task";
-
-            db.run("INSERT INTO tasks (title, priority, due_date) VALUES (?, ?, ?)", [title, priority, due_date]);
-            fs.writeFileSync(DB_PATH, Buffer.from(db.export()));
-            return res.json({ response: `Success! Added task: "${title}"` });
+            if (!title) title = "Quick Note";
+            await run("INSERT INTO tasks (title) VALUES (?)", [title]);
+            await syncIds();
+            return res.json({ response: `Added task: "${title}"` });
         }
 
-        res.json({ response: "I'm not sure what you mean. Try 'add a task', 'show tasks', or 'delete task 5'." });
+        if (msg.includes("list") || msg.includes("show")) return res.json({ response: `You have ${tasks.length} tasks.` });
+
+        res.json({ response: "I'm not sure. Try 'add laundry' or 'delete the last task'." });
     });
+
 
     app.listen(3000, () => {
         console.log("Web API running on http://localhost:3000");

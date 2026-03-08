@@ -57,6 +57,20 @@ const server = new McpServer({
     version: "1.0.0",
 });
 
+// ———————————————— Sync Logic ————————————————
+
+async function syncIds(): Promise<void> {
+    const rows = await db.all("SELECT * FROM tasks ORDER BY id ASC");
+    await db.exec("DELETE FROM tasks");
+    await db.exec("DELETE FROM sqlite_sequence WHERE name='tasks'");
+    for (const t of rows) {
+        await db.run(
+            `INSERT INTO tasks (title, description, priority, status, due_date, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+            [t.title, t.description, t.priority, t.status, t.due_date, t.created_at, t.updated_at]
+        );
+    }
+}
+
 // ──────────── Tool 1: add_task ────────────
 
 server.tool(
@@ -70,58 +84,19 @@ server.tool(
     },
     async ({ title, description, priority, due_date }) => {
         try {
-            const desc = description ?? "";
-            const prio = priority ?? "medium";
-            const due = due_date ?? null;
-
-            const runResult = await db.run(
+            await db.run(
                 `INSERT INTO tasks (title, description, priority, due_date) VALUES (?, ?, ?, ?)`,
-                [title, desc, prio, due]
+                [title, description ?? "", priority ?? "medium", due_date ?? null]
             );
-
-            const insertedId = runResult.lastID;
-
-            if (insertedId == null) {
-                return {
-                    content: [
-                        {
-                            type: "text" as const,
-                            text: JSON.stringify({ success: true, message: "Task created but could not retrieve ID", title, description: desc, priority: prio, due_date: due }, null, 2),
-                        },
-                    ],
-                };
-            }
-
-            // Grab the newly inserted row natively
-            const task = await db.get(`SELECT * FROM tasks WHERE id = ?`, [insertedId]);
-
-            if (!task) {
-                return {
-                    content: [
-                        {
-                            type: "text" as const,
-                            text: JSON.stringify({ success: true, id: insertedId, title, description: desc, priority: prio, due_date: due }, null, 2),
-                        },
-                    ],
-                };
-            }
-
+            await syncIds();
+            const task = await db.get(`SELECT * FROM tasks ORDER BY id DESC LIMIT 1`);
             return {
-                content: [
-                    {
-                        type: "text" as const,
-                        text: JSON.stringify(task, null, 2),
-                    },
-                ],
+                content: [{ type: "text" as const, text: JSON.stringify(task, null, 2) }],
             };
         } catch (err: any) {
             return {
-                content: [
-                    {
-                        type: "text" as const,
-                        text: `Error in add_task: ${err.message}\nStack: ${err.stack}`,
-                    },
-                ],
+                content: [{ type: "text" as const, text: `Error: ${err.message}` }],
+                isError: true
             };
         }
     }
@@ -131,50 +106,12 @@ server.tool(
 
 server.tool(
     "get_tasks",
-    "Search and filter tasks. Returns matching tasks as JSON. All parameters are optional — calling with no filters returns all tasks.",
-    {
-        status: z.enum(["todo", "in_progress", "done"]).optional().describe("Filter by task status"),
-        priority: z.enum(["low", "medium", "high"]).optional().describe("Filter by priority level"),
-        keyword: z.string().optional().describe("Search keyword — matches against title and description"),
-    },
-    async ({ status, priority, keyword }) => {
-        const conditions: string[] = [];
-        const params: string[] = [];
-
-        if (status) {
-            conditions.push("status = ?");
-            params.push(status);
-        }
-        if (priority) {
-            conditions.push("priority = ?");
-            params.push(priority);
-        }
-        if (keyword) {
-            conditions.push("(title LIKE ? OR description LIKE ?)");
-            params.push(`%${keyword}%`, `%${keyword}%`);
-        }
-
-        const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
-        const query = `SELECT * FROM tasks ${where} ORDER BY
-      CASE priority WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 END,
-      due_date ASC NULLS LAST,
-      created_at DESC`;
-
-        const tasks = await db.all(query, params);
-
-        if (!tasks || tasks.length === 0) {
-            return {
-                content: [{ type: "text" as const, text: "No tasks found matching your filters." }],
-            };
-        }
-
+    "Search and filter tasks. Returns all tasks as JSON.",
+    {},
+    async () => {
+        const tasks = await db.all(`SELECT * FROM tasks ORDER BY id ASC`);
         return {
-            content: [
-                {
-                    type: "text" as const,
-                    text: JSON.stringify(tasks, null, 2),
-                },
-            ],
+            content: [{ type: "text" as const, text: JSON.stringify(tasks, null, 2) }],
         };
     }
 );
@@ -183,24 +120,15 @@ server.tool(
 
 server.tool(
     "delete_task",
-    "Delete a task. You can specify the task ID or the exact title.",
+    "Delete a task by ID.",
     {
-        id: z.number().optional().describe("Internal task ID"),
-        title: z.string().optional().describe("Exact title of the task to delete"),
+        id: z.number().describe("Internal task ID"),
     },
-    async ({ id, title }) => {
-        if (id !== undefined) {
-            await db.run(`DELETE FROM tasks WHERE id = ?`, [id]);
-        } else if (title !== undefined) {
-            await db.run(`DELETE FROM tasks WHERE title = ?`, [title]);
-        } else {
-            return {
-                content: [{ type: "text" as const, text: "Error: You must provide either an 'id' or a 'title'." }],
-                isError: true,
-            };
-        }
+    async ({ id }) => {
+        await db.run(`DELETE FROM tasks WHERE id = ?`, [id]);
+        await syncIds();
         return {
-            content: [{ type: "text" as const, text: `Successfully deleted task(s) matching ${id ? `ID ${id}` : `title "${title}"`}.` }],
+            content: [{ type: "text" as const, text: `Successfully deleted task #${id}.` }],
         };
     }
 );

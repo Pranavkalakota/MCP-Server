@@ -12,6 +12,7 @@
             --glass: rgba(255, 255, 255, 0.03);
             --border: rgba(255, 255, 255, 0.1);
             --accent: #5e17eb;
+            --primary: #a78bfa;
             --text: #f0f0f5;
             --low: #34d399;
             --medium: #fbbf24;
@@ -41,8 +42,9 @@
         }
 
         h1 {
-            font-size: 3rem;
+            font-size: 3.5rem;
             font-weight: 600;
+            letter-spacing: -0.02em;
             background: linear-gradient(135deg, #a78bfa, #5e17eb);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
@@ -51,11 +53,12 @@
 
         .card {
             background: var(--glass);
-            backdrop-filter: blur(10px);
+            backdrop-filter: blur(20px);
             border: 1px solid var(--border);
             border-radius: 24px;
             padding: 30px;
             margin-bottom: 30px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
         }
 
         .form-grid {
@@ -70,15 +73,17 @@
             background: rgba(255, 255, 255, 0.05);
             border: 1px solid var(--border);
             border-radius: 12px;
-            padding: 12px 15px;
+            padding: 14px 18px;
             color: white;
             font-family: inherit;
             outline: none;
-            transition: 0.3s;
+            transition: 0.3s cubic-bezier(0.4, 0, 0.2, 1);
         }
 
         input:focus {
-            border-color: var(--accent);
+            border-color: var(--primary);
+            background: rgba(255, 255, 255, 0.08);
+            box-shadow: 0 0 0 4px rgba(167, 139, 250, 0.1);
         }
 
         button {
@@ -89,11 +94,12 @@
             padding: 12px 25px;
             font-weight: 600;
             cursor: pointer;
-            transition: 0.3s transform;
+            transition: 0.3s;
         }
 
         button:hover {
             transform: translateY(-2px);
+            background: #6d28d9;
         }
 
         .task-list {
@@ -103,27 +109,29 @@
         }
 
         .task-item {
-            background: rgba(255, 255, 255, 0.04);
+            background: rgba(255, 255, 255, 0.02);
             border: 1px solid var(--border);
-            border-radius: 16px;
-            padding: 20px;
+            border-radius: 20px;
+            padding: 24px;
             display: flex;
             justify-content: space-between;
             align-items: center;
-            transition: 0.3s;
+            transition: 0.4s;
         }
 
         .task-item:hover {
-            border-color: var(--accent);
-            background: rgba(255, 255, 255, 0.06);
+            border-color: var(--primary);
+            background: rgba(255, 255, 255, 0.05);
+            transform: translateX(5px);
         }
 
         .priority-badge {
-            font-size: 0.75rem;
+            font-size: 0.7rem;
             text-transform: uppercase;
-            padding: 4px 10px;
+            padding: 6px 12px;
             border-radius: 20px;
-            font-weight: 600;
+            font-weight: 800;
+            letter-spacing: 0.05em;
         }
 
         .prio-low {
@@ -142,9 +150,29 @@
         }
 
         .task-meta {
-            font-size: 0.85rem;
+            font-size: 0.8rem;
             color: #888;
-            margin-top: 5px;
+            margin-top: 8px;
+            display: flex;
+            gap: 15px;
+        }
+
+        .chat-message {
+            margin-bottom: 20px;
+            padding: 15px;
+            border-radius: 12px;
+            max-width: 85%;
+        }
+
+        .user-message {
+            background: rgba(94, 23, 235, 0.1);
+            border-left: 3px solid var(--accent);
+            margin-left: auto;
+        }
+
+        .bot-message {
+            background: rgba(255, 255, 255, 0.03);
+            border-left: 3px solid var(--primary);
         }
     </style>
 </head>
@@ -182,13 +210,21 @@
         const API = 'http://localhost:3000';
 
         // Chat functionality
-        function appendChat(msg, isUser = false) {
-            const out = document.getElementById('chatOutput');
-            const div = document.createElement('div');
-            div.style.marginBottom = '10px';
-            div.innerHTML = isUser ? `<b>You:</b> ${msg}` : `<b style="color: #a78bfa;">Assistant:</b> ${msg}`;
-            out.appendChild(div);
-            out.scrollTop = out.scrollHeight;
+        let lastAssistantMessage = "";
+
+        function appendChat(text, isUser = false) {
+            const chatOutput = document.getElementById('chatOutput');
+            const msg = document.createElement('div');
+            msg.className = `chat-message ${isUser ? 'user-message' : 'bot-message'}`;
+            msg.innerHTML = `
+                <div style="font-size: 0.7rem; opacity: 0.7; margin-bottom: 4px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.05em;">
+                    ${isUser ? 'User' : 'Assistant'}
+                </div>
+                <div>${text}</div>
+            `;
+            chatOutput.appendChild(msg);
+            chatOutput.scrollTop = chatOutput.scrollHeight;
+            if (!isUser) lastAssistantMessage = text;
         }
 
         async function sendChatMessage() {
@@ -203,7 +239,7 @@
                 const res = await fetch(`${API}/chat`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ message: text })
+                    body: JSON.stringify({ message: text, lastResponse: lastAssistantMessage })
                 });
                 const data = await res.json();
                 appendChat(data.response);
@@ -222,12 +258,15 @@
                 const res = await fetch(`${API}/tasks`);
                 const tasks = await res.json();
                 const list = document.getElementById('taskList');
-                list.innerHTML = tasks.sort((a, b) => b.id - a.id).map(t => `
+
+                // Tasks are sorted by ID ASC to keep visual index predictable (1 is first, 2 is second)
+                list.innerHTML = tasks.sort((a, b) => a.id - b.id).map((t, i) => `
                     <div class="task-item">
                         <div style="flex-grow: 1">
                             <div style="font-weight: 600; font-size: 1.1rem">
-                                <span style="color: #666; font-size: 0.8rem; margin-right: 8px;">#${t.id}</span>
+                                <span style="color: var(--primary); font-size: 1rem; font-weight: 800; margin-right: 12px;">${i + 1}.</span>
                                 ${t.title}
+                                <span style="color: #999; font-size: 0.7rem; margin-left: 8px; font-weight: 400;">(ID: ${t.id})</span>
                             </div>
                             <div class="task-meta">
                                 Due: ${t.due_date || 'No date'} • Created: ${t.created_at.split(' ')[0]}
