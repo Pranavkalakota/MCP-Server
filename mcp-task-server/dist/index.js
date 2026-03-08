@@ -14,6 +14,8 @@ import { z } from "zod";
 import initSqlJs from "sql.js";
 import path from "node:path";
 import fs from "node:fs";
+import express from "express";
+import cors from "cors";
 // ———————————————— Database ————————————————
 const DB_PATH = path.join(process.env.MCP_TASK_DB_PATH || process.cwd(), "tasks.db");
 let db;
@@ -156,11 +158,37 @@ server.tool("get_tasks", "Search and filter tasks. Returns matching tasks as JSO
     };
 });
 // ———————————————— Start Server ————————————————
+async function startWebServer() {
+    const app = express();
+    app.use(cors());
+    app.use(express.json());
+    app.get("/tasks", (req, res) => {
+        const result = db.exec("SELECT * FROM tasks ORDER BY id DESC");
+        if (!result.length)
+            return res.json([]);
+        const cols = result[0].columns;
+        const tasks = result[0].values.map(row => Object.fromEntries(cols.map((c, i) => [c, row[i]])));
+        res.json(tasks);
+    });
+    app.post("/tasks", (req, res) => {
+        const { title, description, priority, due_date } = req.body;
+        db.run(`INSERT INTO tasks (title, description, priority, due_date) VALUES (?, ?, ?, ?)`, [title, description || "", priority || "medium", due_date || null]);
+        saveDb();
+        res.json({ success: true });
+    });
+    app.listen(3000, () => {
+        console.error("[mcp-task-server] HTTP API running on http://localhost:3000");
+    });
+}
 async function main() {
     await initDatabase();
+    // Start web server without blocking the MCP connection
+    startWebServer().catch(err => {
+        console.error("[mcp-task-server] Web server failed to start:", err);
+    });
     const transport = new StdioServerTransport();
     await server.connect(transport);
-    console.error("[mcp-task-server] Server running on stdio");
+    console.error("[mcp-task-server] MCP Server running on stdio");
 }
 main().catch((err) => {
     console.error("[mcp-task-server] Fatal error:", err);

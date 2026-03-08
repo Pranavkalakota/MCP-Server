@@ -15,6 +15,8 @@ import { z } from "zod";
 import initSqlJs, { type Database } from "sql.js";
 import path from "node:path";
 import fs from "node:fs";
+import express from "express";
+import cors from "cors";
 
 // ———————————————— Database ————————————————
 
@@ -200,11 +202,47 @@ server.tool(
 
 // ———————————————— Start Server ————————————————
 
+async function startWebServer(): Promise<void> {
+    const app = express();
+    app.use(cors());
+    app.use(express.json());
+
+    app.get("/tasks", (req, res) => {
+        const result = db.exec("SELECT * FROM tasks ORDER BY id DESC");
+        if (!result.length) return res.json([]);
+        const cols = result[0].columns;
+        const tasks = result[0].values.map(row =>
+            Object.fromEntries(cols.map((c, i) => [c, row[i]]))
+        );
+        res.json(tasks);
+    });
+
+    app.post("/tasks", (req, res) => {
+        const { title, description, priority, due_date } = req.body;
+        db.run(
+            `INSERT INTO tasks (title, description, priority, due_date) VALUES (?, ?, ?, ?)`,
+            [title, description || "", priority || "medium", due_date || null]
+        );
+        saveDb();
+        res.json({ success: true });
+    });
+
+    app.listen(3000, () => {
+        console.error("[mcp-task-server] HTTP API running on http://localhost:3000");
+    });
+}
+
 async function main(): Promise<void> {
     await initDatabase();
+
+    // Start web server without blocking the MCP connection
+    startWebServer().catch(err => {
+        console.error("[mcp-task-server] Web server failed to start:", err);
+    });
+
     const transport = new StdioServerTransport();
     await server.connect(transport);
-    console.error("[mcp-task-server] Server running on stdio");
+    console.error("[mcp-task-server] MCP Server running on stdio");
 }
 
 main().catch((err) => {

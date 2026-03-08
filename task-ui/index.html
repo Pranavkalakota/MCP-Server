@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TaskVibe Dashboard</title>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #0a0a0c;
+            --glass: rgba(255, 255, 255, 0.03);
+            --border: rgba(255, 255, 255, 0.1);
+            --accent: #5e17eb;
+            --text: #f0f0f5;
+            --low: #34d399;
+            --medium: #fbbf24;
+            --high: #f87171;
+        }
+
+        body {
+            font-family: 'Outfit', sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            margin: 0;
+            display: flex;
+            justify-content: center;
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+
+        .container {
+            width: 90%;
+            max-width: 900px;
+            padding: 40px 0;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 50px;
+        }
+
+        h1 {
+            font-size: 3rem;
+            font-weight: 600;
+            background: linear-gradient(135deg, #a78bfa, #5e17eb);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin: 0;
+        }
+
+        .card {
+            background: var(--glass);
+            backdrop-filter: blur(10px);
+            border: 1px solid var(--border);
+            border-radius: 24px;
+            padding: 30px;
+            margin-bottom: 30px;
+        }
+
+        .form-grid {
+            display: grid;
+            grid-template-columns: 2fr 1fr 1fr;
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        input, select {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 12px 15px;
+            color: white;
+            font-family: inherit;
+            outline: none;
+            transition: 0.3s;
+        }
+
+        input:focus { border-color: var(--accent); }
+
+        button {
+            background: var(--accent);
+            color: white;
+            border: none;
+            border-radius: 12px;
+            padding: 12px 25px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: 0.3s transform;
+        }
+
+        button:hover { transform: translateY(-2px); }
+
+        .task-list {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        .task-item {
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            transition: 0.3s;
+        }
+
+        .task-item:hover {
+            border-color: var(--accent);
+            background: rgba(255, 255, 255, 0.06);
+        }
+
+        .priority-badge {
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-weight: 600;
+        }
+
+        .prio-low { background: rgba(52, 211, 153, 0.1); color: var(--low); }
+        .prio-medium { background: rgba(251, 191, 36, 0.1); color: var(--medium); }
+        .prio-high { background: rgba(248, 113, 113, 0.1); color: var(--high); }
+
+        .task-meta { font-size: 0.85rem; color: #888; margin-top: 5px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>TaskVibe</h1>
+            <p style="color: #666">CS 290 Task Management Dashboard</p>
+        </header>
+
+        <div class="card">
+            <div class="form-grid">
+                <input type="text" id="title" placeholder="What needs to be done?">
+                <select id="priority">
+                    <option value="low">Low</option>
+                    <option value="medium" selected>Medium</option>
+                    <option value="high">High</option>
+                </select>
+                <input type="date" id="due_date">
+            </div>
+            <button onclick="addTask()" style="width: 100%">+ ADD TASK</button>
+        </div>
+
+        <div id="taskList" class="task-list">
+            <!-- Tasks will appear here -->
+        </div>
+    </div>
+
+    <script>
+        const API = 'http://localhost:3000';
+
+        async function loadTasks() {
+            try {
+                const res = await fetch(`${API}/tasks`);
+                const tasks = await res.json();
+                const list = document.getElementById('taskList');
+                list.innerHTML = tasks.map(t => `
+                    <div class="task-item">
+                        <div>
+                            <div style="font-weight: 600; font-size: 1.1rem">${t.title}</div>
+                            <div class="task-meta">
+                                Due: ${t.due_date || 'No date'} • Created: ${t.created_at.split(' ')[0]}
+                            </div>
+                        </div>
+                        <span class="priority-badge prio-${t.priority}">${t.priority}</span>
+                    </div>
+                `).join('');
+            } catch (e) {
+                console.error("Link to offline database failed.", e);
+            }
+        }
+
+        async function addTask() {
+            const title = document.getElementById('title').value;
+            const priority = document.getElementById('priority').value;
+            const due_date = document.getElementById('due_date').value;
+
+            if (!title) return alert("Please enter a title");
+
+            await fetch(`${API}/tasks`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ title, priority, due_date })
+            });
+
+            document.getElementById('title').value = '';
+            loadTasks();
+        }
+
+        loadTasks();
+    </script>
+</body>
+</html>
