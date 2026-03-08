@@ -1,7 +1,7 @@
 {
     "name": "mcp-task-server",
     "version": "1.0.0",
-    "description": "An MCP server for task management with SQLite storage — CS 290 Final Challenge",
+    "description": "An MCP server for task management with SQLite storage",
     "type": "module",
     "scripts": {
         "build": "tsc",

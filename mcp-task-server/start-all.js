@@ -5,7 +5,7 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-console.log("🚀 Starting TaskVibe Task System...\n");
+console.log("🚀 Starting MCP Server Integration Task System...\n");
 
 // 1. Start the Web UI backend server (which is in CommonJS)
 console.log("1. Starting Web API Server on port 3000...");
@@ -36,7 +36,7 @@ setTimeout(() => {
 
 // Catch Ctrl+C to cleanly kill the server
 process.on('SIGINT', () => {
-    console.log("\nShutting down TaskVibe servers...");
+    console.log("\nShutting down MCP Server Integration servers...");
     server.kill();
     process.exit(0);
 });

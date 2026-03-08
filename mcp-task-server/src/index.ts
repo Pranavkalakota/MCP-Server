@@ -1,5 +1,5 @@
 // ============================================================
-// MCP Task Manager Server — CS 290 Final Challenge
+// MCP Task Manager Server
 // Team Members: Pranav Kalakota
 // ============================================================
 // Three tools:

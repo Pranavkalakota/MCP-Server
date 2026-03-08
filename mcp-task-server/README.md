@@ -63,5 +63,5 @@ mcp-task-server/
 ├── tsconfig.json
 └── tasks.db              ← Auto-created Native SQLite Database
 task-ui/
-└── index.html            ← Stylish Vibe Web UI Dashboard
+└── index.html            ← Stylish MCP Server Integration Dashboard
 ```
