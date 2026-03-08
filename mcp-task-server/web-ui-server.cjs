@@ -128,6 +128,8 @@ async function start() {
         }
     });
 
+    const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
+
     app.post('/chat', async (req, res) => {
         const { message, lastResponse } = req.body;
         const msg = (message || "").toLowerCase();
@@ -135,10 +137,10 @@ async function start() {
         const tasks = await all("SELECT * FROM tasks ORDER BY id ASC");
 
         if (openai) {
-            console.log("AI CHAT: Using Pro Mode (OpenAI)");
+            console.log(`AI CHAT: Using Pro Mode (${OPENAI_MODEL})`);
             try {
                 const completion = await openai.chat.completions.create({
-                    model: "gpt-4o-mini",
+                    model: OPENAI_MODEL,
                     messages: [
                         {
                             role: "system",
@@ -149,11 +151,9 @@ async function start() {
                             LAST RESPONSE: "${lastResponse || "None"}"
 
                             INSTRUCTIONS:
-                            1. PRIORITY: If the user explicitly says "add", "create", or "new" (e.g. "add a task to remove trash"), action is ALWAYS "add" even if deletion keywords like "remove" are present.
-                            2. DEFAULT ACTION: If the user just provides a phrase (e.g. "walk the dog") without a command, action="add".
-                            3. DELETION: Only use "ask_confirmation" if the user uses "delete"/"remove" AND is clearly targeting an existing task ID or name.
-                            4. CONTEXTUAL: "delete last" targets highest ID.
-                            5. Return strictly JSON: { "action": "add"|"delete"|"ask_confirmation"|"undo"|"redo"|"message", "id": ..., "title": "...", "message": "..." }`
+                            1. TYPO TOLERANCE: Be flexible (e.g., "adddd", "undooo").
+                            2. MODE: You are running on ${OPENAI_MODEL}.
+                            3. Return strictly JSON: { "action": "add"|"delete"|"ask_confirmation"|"undo"|"redo"|"message", "id": ..., "title": "...", "message": "..." }`
                         },
                         { role: "user", content: message }
                     ],
@@ -161,43 +161,50 @@ async function start() {
                 });
 
                 const gpt = JSON.parse(completion.choices[0].message.content);
+                const prefix = `[Mode: ${OPENAI_MODEL}] `;
 
                 if (gpt.action === "add") {
                     await run("INSERT INTO tasks (title, priority) VALUES (?, ?)", [gpt.title || message, "medium"]);
                     await pushHistory("delete", { title: gpt.title || message });
                     await syncIds();
-                    return res.json({ response: `[AI PRO] Added: "${gpt.title || message}"` });
+                    return res.json({ response: `${prefix}Added: "${gpt.title || message}"` });
                 }
-                else if (gpt.action === "ask_confirmation") return res.json({ response: `[AI PRO] ${gpt.message}` });
+                else if (gpt.action === "ask_confirmation") return res.json({ response: `${prefix}${gpt.message}` });
                 else if (gpt.action === "delete" && gpt.id) {
                     const task = await db.get("SELECT * FROM tasks WHERE id = ?", [gpt.id]);
                     if (task) await pushHistory("add", task);
                     await run("DELETE FROM tasks WHERE id = ?", [gpt.id]);
                     await syncIds();
-                    return res.json({ response: `[AI PRO] Success! Task #${gpt.id} deleted.` });
+                    return res.json({ response: `${prefix}Success! Task #${gpt.id} deleted.` });
                 }
                 else if (gpt.action === "undo") {
                     const resText = await performHistoryAction(true);
-                    return res.json({ response: resText ? `[AI PRO] Undone! ${resText}.` : "[AI PRO] Nothing to undo." });
+                    return res.json({ response: resText ? `${prefix}Undone! ${resText}.` : `${prefix}Nothing to undo.` });
                 }
                 else if (gpt.action === "redo") {
                     const resText = await performHistoryAction(false);
-                    return res.json({ response: resText ? `[AI PRO] Redone! ${resText}.` : "[AI PRO] Nothing to redo." });
+                    return res.json({ response: resText ? `${prefix}Redone! ${resText}.` : `${prefix}Nothing to redo."` });
                 }
-                else if (gpt.action === "message") return res.json({ response: gpt.message });
+                else if (gpt.action === "message") return res.json({ response: `${prefix}${gpt.message}` });
 
-                return res.json({ response: "I'm not sure how to help with that. Try 'add laundry'." });
+                return res.json({ response: `${prefix}I'm not sure how to help. Try 'add lunch'.` });
             } catch (err) {
-                console.error("OpenAI Error:", err.message);
+                console.error(`OpenAI Error (${OPENAI_MODEL}):`, err.message);
+                // Fall through to local NLP
             }
         }
 
-        console.log("AI CHAT: Using Standard Mode (Local NLP)");
+        console.log("AI CHAT: Using Local NLP Fallback");
+        const fallbackPrefix = "[Mode: Local Standard Engine] ";
 
-        // --- IMPROVED FALLBACK NLP ---
+        // Fuzzy Match Regex Patterns (Handles repeated letters like adddd, delet, removvve)
+        const addRegex = /\b(a+d+s?|c+r+e+a+t+e+|m+a+k+e+|n+e+w+)\b/i;
+        const deleteRegex = /\b(d+e+l+e+t+e+|r+e+m+o+v+e+|c+l+e+a+r+|t+a+k+e+\s+o+u+t+|d+e+l+)\b/i;
+        const undoRegex = /\b(u+n+d+o+|r+e+v+e+r+t+|o+o+p+s+)\b/i;
+        const redoRegex = /\b(r+e+d+o+|b+r+i+n+g+\s+b+a+c+k+)\b/i;
 
         // 1. Check for Confirmation
-        if ((msg === "yes" || msg === "do it" || msg === "confirm") && lastResponse.includes("confirm you want to delete")) {
+        if ((msg === "yes" || msg === "do it" || msg === "confirm" || msg === "yea") && lastResponse.includes("confirm you want to delete")) {
             const idMatch = lastResponse.match(/\d+/);
             if (idMatch) {
                 const targetId = parseInt(idMatch[0]);
@@ -205,26 +212,22 @@ async function start() {
                 if (task) await pushHistory("add", task);
                 await run("DELETE FROM tasks WHERE id = ?", [targetId]);
                 await syncIds();
-                return res.json({ response: `Confirmed. Task #${targetId} removed.` });
+                return res.json({ response: `${fallbackPrefix}Confirmed. Task #${targetId} removed.` });
             }
         }
 
-        // 2. Undo/Redo
-        if (msg.includes("undo") || msg.includes("revert") || msg.includes("oops")) {
+        // 2. Undo/Redo (Fuzzy)
+        if (undoRegex.test(msg)) {
             const resText = await performHistoryAction(true);
-            return res.json({ response: resText ? `Undone! ${resText}.` : "Nothing to undo." });
+            return res.json({ response: resText ? `${fallbackPrefix}Undone! ${resText}.` : `${fallbackPrefix}Nothing to undo.` });
         }
-        if (msg.includes("redo") || msg.includes("bring back")) {
+        if (redoRegex.test(msg)) {
             const resText = await performHistoryAction(false);
-            return res.json({ response: resText ? `Redone! ${resText}.` : "Nothing to redo." });
+            return res.json({ response: resText ? `${fallbackPrefix}Redone! ${resText}.` : `${fallbackPrefix}Nothing to redo.` });
         }
 
-        // 3. Priority Check: Is this an 'Add' request disguised with a 'remove' word?
-        const isExplicitAdd = msg.startsWith("add") || msg.startsWith("create") || msg.startsWith("new") || msg.startsWith("make");
-        const deleteKeywords = ["delete", "remove", "clear", "take out"];
-        const hasDeleteKeyword = deleteKeywords.some(k => msg.includes(k));
-
-        if (hasDeleteKeyword && !isExplicitAdd) {
+        // 3. Delete (Fuzzy & Keywords)
+        if (deleteRegex.test(msg) && !addRegex.test(msg)) {
             let targetId = null;
             let targetTitle = "";
 
@@ -251,22 +254,23 @@ async function start() {
                 }
             }
 
-            // ONLY return a deletion confirmation if we actually found a task to delete!
             if (targetId && targetTitle) {
-                return res.json({ response: `Please confirm you want to delete task #${targetId} ("${targetTitle}")? (Yes/No)` });
+                return res.json({ response: `${fallbackPrefix}Please confirm you want to delete task #${targetId} ("${targetTitle}")? (Yes/No)` });
             }
-            // If No Target Found, we fall through to the 'Add' logic below!
         }
 
         // 4. List Check
         if (msg.includes("list") || msg.includes("show") || msg.includes("tasks")) {
-            return res.json({ response: `You have ${tasks.length} task(s).` });
+            return res.json({ response: `${fallbackPrefix}You have ${tasks.length} task(s).` });
         }
 
-        // 5. Final Default: ADD the task
+        // 5. Default to Add (Fuzzy cleaning of title)
         let title = message;
-        if (isExplicitAdd) {
-            title = message.replace(/\b(add|create|make|new|task|to|remind|me|a|an)\b/gi, "").trim();
+        if (addRegex.test(msg)) {
+            // Remove the fuzzy matches from the title
+            title = message.replace(new RegExp(addRegex.source, 'gi'), "").trim();
+            // Clean up helper words
+            title = title.replace(/\b(task|to|remind|me|a|an)\b/gi, "").trim();
             title = title.replace(/^[^a-zA-Z0-9]+|[^a-zA-Z0-9]+$/g, '').trim();
         }
 
@@ -274,7 +278,7 @@ async function start() {
         await run("INSERT INTO tasks (title) VALUES (?)", [title]);
         await pushHistory("delete", { title });
         await syncIds();
-        return res.json({ response: `Added task: "${title}"` });
+        return res.json({ response: `${fallbackPrefix}Added task: "${title}"` });
     });
 
 
