@@ -3,6 +3,12 @@ const cors = require('cors');
 const initSqlJs = require('sql.js');
 const fs = require('fs');
 const path = require('path');
+require('dotenv').config();
+const { OpenAI } = require('openai');
+
+const openai = process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY.startsWith("sk-")
+    ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+    : null;
 
 const DB_PATH = path.join(__dirname, 'tasks.db');
 
@@ -49,9 +55,56 @@ async function start() {
         res.json({ success: true });
     });
 
-    app.post('/chat', (req, res) => {
+    app.post('/chat', async (req, res) => {
         const query = (req.body.message || "").toLowerCase();
 
+        if (openai) {
+            try {
+                const completion = await openai.chat.completions.create({
+                    model: "gpt-4o-mini",
+                    messages: [
+                        {
+                            role: "system",
+                            content: "You are a task routing assistant. The user will ask you to manage tasks. Decide which action to take: 'add', 'delete', or 'list'. Return your decision strictly as a JSON object like { \"action\": \"add\", \"title\": \"Walk dog\", \"priority\": \"high\" }. If they want to delete, return { \"action\": \"delete\", \"id\": 5 }. If they want to list, return { \"action\": \"list\" }."
+                        },
+                        {
+                            role: "user",
+                            content: query
+                        }
+                    ],
+                    response_format: { type: "json_object" }
+                });
+
+                const gptDecision = JSON.parse(completion.choices[0].message.content);
+
+                if (gptDecision.action === "add") {
+                    const priority = gptDecision.priority || "medium";
+                    const title = gptDecision.title || "Untitled Task";
+                    const due_date = gptDecision.due_date || null;
+                    db.run("INSERT INTO tasks (title, priority, due_date) VALUES (?, ?, ?)", [title, priority, due_date]);
+                    fs.writeFileSync(DB_PATH, Buffer.from(db.export()));
+                    return res.json({ response: `Success! Added task: "${title}"` });
+                }
+                else if (gptDecision.action === "delete") {
+                    if (gptDecision.id) {
+                        db.run("DELETE FROM tasks WHERE id = ?", [gptDecision.id]);
+                        fs.writeFileSync(DB_PATH, Buffer.from(db.export()));
+                        return res.json({ response: `Success! Deleted task #${gptDecision.id}.` });
+                    }
+                }
+                else if (gptDecision.action === "list") {
+                    const result = db.exec("SELECT * FROM tasks");
+                    if (!result.length) return res.json({ response: "You have no active tasks matching this query." });
+                    return res.json({ response: `You currently have ${result[0].values.length} active task(s).` });
+                }
+                return res.json({ response: "I'm not exactly sure what to do with that." });
+            } catch (err) {
+                console.error("OpenAI Error:", err);
+                return res.json({ response: "OpenAI parsing failed. Please check your API key." });
+            }
+        }
+
+        // --- FALLBACK NLP LOGIC (if no valid API key) ---
         // 1. DELETE INTENT
         if (query.includes("delete") || query.includes("remove") || query.includes("cancel")) {
             const match = query.match(/(?:task\s+)?#?(\d+)/i);
