@@ -5,7 +5,7 @@ This is a comprehensive Task Management system built on the **Model Context Prot
 
 ---
 
-## 🏗️ Multi-User & Privacy First
+## Multi-User & Privacy First
 This project is designed for "Zero-Config" deployment.
 - **Private Databases:** Every user has their own independent `tasks.db`. Because the database file is `.gitignored`, your personal tasks are never pushed to GitHub or shared with others.
 - **Automatic Initialization:** When a new user (like a grader) runs the project (e.g., via `npm run start-ui`), the system instantly detects the missing database and creates a fresh, empty task list for them automatically.
