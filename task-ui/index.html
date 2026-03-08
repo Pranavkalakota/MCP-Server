@@ -156,26 +156,6 @@
             <p style="color: #666">Task Management Dashboard</p>
         </header>
 
-        <div class="card">
-            <div class="form-grid">
-                <input type="text" id="title" placeholder="What needs to be done?">
-                <select id="priority">
-                    <option value="low">Low</option>
-                    <option value="medium" selected>Medium</option>
-                    <option value="high">High</option>
-                </select>
-                <input type="date" id="due_date">
-            </div>
-            <button onclick="addTask()" style="width: 100%">+ ADD TASK</button>
-        </div>
-
-        <div class="card">
-            <div style="display: flex; gap: 15px;">
-                <input type="text" id="deleteInput" placeholder="Enter ID or Exact Title to Delete"
-                    style="flex-grow: 1">
-                <button onclick="deleteTypedTask()" style="background: var(--high)">DELETE</button>
-            </div>
-        </div>
 
         <div id="taskList" class="task-list">
             <!-- Tasks will appear here -->
@@ -264,22 +244,6 @@
             }
         }
 
-        async function addTask() {
-            const title = document.getElementById('title').value;
-            const priority = document.getElementById('priority').value;
-            const due_date = document.getElementById('due_date').value;
-
-            if (!title) return alert("Please enter a title");
-
-            await fetch(`${API}/tasks`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ title, priority, due_date })
-            });
-
-            document.getElementById('title').value = '';
-            loadTasks();
-        }
 
         async function deleteTask(id) {
             if (!confirm(`Delete task #${id}?`)) return;
@@ -287,26 +251,7 @@
             loadTasks();
         }
 
-        async function deleteTypedTask() {
-            const input = document.getElementById('deleteInput').value;
-            if (!input) return;
 
-            // If it's a number, delete by ID, else it's a title
-            if (!isNaN(input)) {
-                await fetch(`${API}/tasks/${input}`, { method: 'DELETE' });
-            } else {
-                const res = await fetch(`${API}/tasks`);
-                const tasks = await res.json();
-                const task = tasks.find(t => t.title === input);
-                if (task) {
-                    await fetch(`${API}/tasks/${task.id}`, { method: 'DELETE' });
-                } else {
-                    alert("Task not found with that title/ID");
-                }
-            }
-            document.getElementById('deleteInput').value = '';
-            loadTasks();
-        }
 
         loadTasks();
     </script>
