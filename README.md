@@ -1,4 +1,4 @@
-# 🚀 MCP Task Manager Server
+# MCP Task Manager Server
 **Conversational AI Assistant & Dashboard**
 
 This is a comprehensive Task Management system built on the **Model Context Protocol (MCP)**. It features a high-performance SQLite backend, a stunning Glassmorphism Web Dashboard, and an intelligent Conversational AI Assistant that can manage your life through simple natural language.
@@ -13,7 +13,7 @@ This project is designed for "Zero-Config" deployment.
 
 ---
 
-## ⚡ Quick Start (For New Users)
+## Quick Start (For New Users)
 
 ### 1. Installation
 Ensure you have Node.js installed, then run:
@@ -36,19 +36,19 @@ npm run chat
 
 ---
 
-## 🤖 Intelligent Conversational AI
+## Intelligent Conversational AI
 The system features two processing modes:
 1.  **OpenAI Mode (Premium):** If an OpenAI API Key is provided in a `.env` file, the bot uses GPT-4o-mini for incredibly flexible natural language understanding (e.g., *"Delete the coding task I added earlier"*).
 2.  **Local Fallback (Standard):** If no API key is detected, the system automatically falls back to a **Built-in Local NLP Engine** that identifies keywords (add, list, delete) to ensure 100% functionality out-of-the-box.
 
-### 🔑 Enabling OpenAI Integration
+### Enabling OpenAI Integration
 1. Rename `.env.example` to `.env`.
 2. Paste your `OPENAI_API_KEY`.
 3. Restart the server.
 
 ---
 
-## 🛠️ Project Structure
+## Project Structure
 - **/src/index.ts**: The core MCP Server (stdio transport).
 - **web-ui-server.cjs**: The backend API for the dashboard (Native SQLite).
 - **/task-ui/index.html**: The premium Glassmorphism frontend.
