@@ -6,6 +6,8 @@ CS 290 Final Challenge — an MCP server exposing **two tools** backed by SQLite
 |------|-------------|
 | `add_task` | Creates a task with title, description, priority (`low`/`medium`/`high`), and optional due date |
 | `get_tasks` | Filters/searches tasks by status (`todo`/`in_progress`/`done`), priority, or keyword |
+| `delete_task` | Delete a task. You can specify the task ID or the exact title. (`todo`/`in_progress`/`done`), priority, or keyword |
+
 
 ## Quick Start
 
