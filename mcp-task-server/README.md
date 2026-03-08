@@ -8,13 +8,18 @@ CS 290 Final Challenge — an MCP server exposing **three tools** backed by nati
 | `get_tasks` | Filters/searches tasks by status (`todo`/`in_progress`/`done`), priority, or keyword |
 | `delete_task` | Deletes a task by ID or exact title |
 
-## Running the Project & Web UI (The Easy Way)
+## Quick Start: Running the Project & Web UI
 
-To test the entire system instantly (Backend + Web Dashboard + SQLite DB), run this single automated command:
+For graders, reviewers, or anyone else testing this project locally, simply clone the repository (or extract the ZIP) and run the following automated commands:
 
 ```bash
+# 1. Navigate into the project directory
 cd mcp-task-server
+
+# 2. Install the required dependencies
 npm install
+
+# 3. Start the entire ecosystem automatically
 npm run start-ui
 ```
 
