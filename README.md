@@ -64,11 +64,17 @@ claude mcp add task-manager -- npx tsx /ABSOLUTE/PATH/TO/mcp-task-server/src/ind
 
 ```
 mcp-task-server/
-├── src/index.ts      ← MCP server (both tools defined here)
+├── src/index.ts          ← Main MCP Server (Tools defined here)
+├── web-ui-server.cjs     ← Standalone Express backend for the Web UI
+├── cli-chat.js           ← Conversational CLI wrapper
+├── open-db.js            ← Helper script to open tasks.db in DB Browser
+├── start-all.js          ← Main Orchestration Script
 ├── package.json
 ├── tsconfig.json
-└── tasks.db          ← auto-created on first run
-```
+└── tasks.db              ← Auto-created Native SQLite Database
+task-ui/
+└── index.html            ← Stylish MCP Server Integration Dashboard
+
 
 For graders, reviewers, or anyone else testing this project locally, simply clone the repository (or extract the ZIP) and run the following automated commands:
 
