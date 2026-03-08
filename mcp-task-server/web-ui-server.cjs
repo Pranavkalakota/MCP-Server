@@ -149,10 +149,10 @@ async function start() {
                             LAST RESPONSE: "${lastResponse || "None"}"
 
                             INSTRUCTIONS:
-                            1. DEFAULT ACTION: If the user just provides a phrase (e.g., "walk the dog") without a command, action="add".
-                            2. DELETION: Use "ask_confirmation" for delete/remove/clear/take-out.
-                            3. CONTEXTUAL: "delete last" targets highest ID.
-                            4. UNDO/REDO: Action="undo" or "redo".
+                            1. PRIORITY: If the user explicitly says "add", "create", or "new" (e.g. "add a task to remove trash"), action is ALWAYS "add" even if deletion keywords like "remove" are present.
+                            2. DEFAULT ACTION: If the user just provides a phrase (e.g. "walk the dog") without a command, action="add".
+                            3. DELETION: Only use "ask_confirmation" if the user uses "delete"/"remove" AND is clearly targeting an existing task ID or name.
+                            4. CONTEXTUAL: "delete last" targets highest ID.
                             5. Return strictly JSON: { "action": "add"|"delete"|"ask_confirmation"|"undo"|"redo"|"message", "id": ..., "title": "...", "message": "..." }`
                         },
                         { role: "user", content: message }
@@ -186,10 +186,9 @@ async function start() {
                 }
                 else if (gpt.action === "message") return res.json({ response: gpt.message });
 
-                // If we got an unrecognized action, return an error rather than falling through
-                return res.json({ response: "AI Mode active, but I couldn't determine the next step. Try 'add laundry' or 'show tasks'." });
+                return res.json({ response: "I'm not sure how to help with that. Try 'add laundry'." });
             } catch (err) {
-                console.error("OpenAI Error (Falling back to Local NLP):", err.message);
+                console.error("OpenAI Error:", err.message);
             }
         }
 
@@ -197,7 +196,7 @@ async function start() {
 
         // --- IMPROVED FALLBACK NLP ---
 
-        // 1. Check for confirmation
+        // 1. Check for Confirmation
         if ((msg === "yes" || msg === "do it" || msg === "confirm") && lastResponse.includes("confirm you want to delete")) {
             const idMatch = lastResponse.match(/\d+/);
             if (idMatch) {
@@ -220,8 +219,12 @@ async function start() {
             return res.json({ response: resText ? `Redone! ${resText}.` : "Nothing to redo." });
         }
 
-        // 3. Delete (Requires explicit keywords)
-        if (msg.includes("delete") || msg.includes("remove") || msg.includes("clear") || msg.includes("take out")) {
+        // 3. Priority Check: Is this an 'Add' request disguised with a 'remove' word?
+        const isExplicitAdd = msg.startsWith("add") || msg.startsWith("create") || msg.startsWith("new") || msg.startsWith("make");
+        const deleteKeywords = ["delete", "remove", "clear", "take out"];
+        const hasDeleteKeyword = deleteKeywords.some(k => msg.includes(k));
+
+        if (hasDeleteKeyword && !isExplicitAdd) {
             let targetId = null;
             let targetTitle = "";
 
@@ -236,7 +239,7 @@ async function start() {
                 if (idMatch) {
                     targetId = parseInt(idMatch[0]);
                     const t = tasks.find(x => x.id === targetId);
-                    targetTitle = t ? t.title : `Task #${targetId}`;
+                    targetTitle = t ? t.title : null;
                 } else {
                     for (const t of tasks) {
                         if (msg.includes(t.title.toLowerCase())) {
@@ -248,20 +251,21 @@ async function start() {
                 }
             }
 
-            if (targetId) {
+            // ONLY return a deletion confirmation if we actually found a task to delete!
+            if (targetId && targetTitle) {
                 return res.json({ response: `Please confirm you want to delete task #${targetId} ("${targetTitle}")? (Yes/No)` });
             }
-            return res.json({ response: "Specify which task to delete, or try 'delete last'." });
+            // If No Target Found, we fall through to the 'Add' logic below!
         }
 
-        // 4. List
+        // 4. List Check
         if (msg.includes("list") || msg.includes("show") || msg.includes("tasks")) {
             return res.json({ response: `You have ${tasks.length} task(s).` });
         }
 
-        // 5. Default to Add (for "walk the dog", "finish homework", etc.)
+        // 5. Final Default: ADD the task
         let title = message;
-        if (msg.includes("add") || msg.includes("create") || msg.includes("new")) {
+        if (isExplicitAdd) {
             title = message.replace(/\b(add|create|make|new|task|to|remind|me|a|an)\b/gi, "").trim();
             title = title.replace(/^[^a-zA-Z0-9]+|[^a-zA-Z0-9]+$/g, '').trim();
         }

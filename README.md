@@ -1,56 +1,48 @@
-# MCP Task Manager Server
+# 🚀 MCP Task Manager Server
 **Conversational AI Assistant & Dashboard**
 
-This is a comprehensive Task Management system built on the **Model Context Protocol (MCP)**. It features a high-performance SQLite backend, a stunning Glassmorphism Web Dashboard, and an intelligent Conversational AI Assistant that can manage your life through simple natural language.
+This is a comprehensive Task Management system built on the **Model Context Protocol (MCP)**. It features a high-performance SQLite backend, a stunning Glassmorphism Web Dashboard, and an intelligent Conversational AI Assistant.
 
 ---
 
-## Multi-User & Privacy First
-This project is designed for "Zero-Config" deployment.
-- **Private Databases:** Every user has their own independent `tasks.db`. Because the database file is `.gitignored`, your personal tasks are never pushed to GitHub or shared with others.
-- **Automatic Initialization:** When a new user (like a grader) runs the project (e.g., via `npm run start-ui`), the system instantly detects the missing database and creates a fresh, empty task list for them automatically.
-- **No SQLite Required:** The project uses the `sqlite3` driver which is automatically handled by `npm install`. No external database software installation is needed.
+## 🏗️ Multi-User & Privacy First
+- **Individual "Clean Slates":** Every user has their own independent `tasks.db`. Your personal tasks are **not** shared because the database is `.gitignored`.
+- **Automatic Initialization:** The system detects a missing database and builds a fresh one automatically on first launch.
+- **Dynamic ID Synchronization:** Tasks are strictly numbered **1, 2, 3...** in both the UI and SQL database. If you delete task #1, everything slides up to fill the gap.
 
 ---
 
-## Quick Start (For New Users)
+## ⚡ Quick Start
 
 ### 1. Installation
-Ensure you have Node.js installed, then run:
 ```bash
 cd mcp-task-server
 npm install
 ```
 
-### 2. Launch Everything (Web UI + Database + API)
-This command will start the server, open your browser, and launch the database viewer all at once:
+### 2. Launch Everything
 ```bash
 npm run start-ui
 ```
 
-### 3. Launch the AI Chatbot
-In a separate terminal, talk to the AI system directly:
-```bash
-npm run chat
-```
+### 3. Smart Conversational Features
+Talk to the assistant in the purple chat box on the dashboard. It supports:
+- **Undo / Redo:** Use keywords like *"undo"*, *"redo"*, *"oops"*, *"revert"*, or *"bring back"* to reverse your last action.
+- **Contextual Deletion:** Say *"delete the task I just made"* to remove your most recent entry.
+- **Confirmation Safety:** The AI will always ask *"Are you sure?"* before deleting anything. Just say *"yes"* to confirm.
+- **Smart Parsing:** High-performance title extraction (*"add a task to eat lunch"* correctly creates *"eat lunch"*).
 
 ---
 
-## Intelligent Conversational AI
-The system features two processing modes:
-1.  **OpenAI Mode (Premium):** If an OpenAI API Key is provided in a `.env` file, the bot uses GPT-4o-mini for incredibly flexible natural language understanding (e.g., *"Delete the coding task I added earlier"*).
-2.  **Local Fallback (Standard):** If no API key is detected, the system automatically falls back to a **Built-in Local NLP Engine** that identifies keywords (add, list, delete) to ensure 100% functionality out-of-the-box.
-
-### Enabling OpenAI Integration
+## 🤖 AI Customization (OpenAI Key)
 1. Rename `.env.example` to `.env`.
 2. Paste your `OPENAI_API_KEY`.
-3. Restart the server.
+3. Restart the server for advanced natural language features.
 
 ---
 
-## Project Structure
-- **/src/index.ts**: The core MCP Server (stdio transport).
-- **web-ui-server.cjs**: The backend API for the dashboard (Native SQLite).
-- **/task-ui/index.html**: The premium Glassmorphism frontend.
-- **cli-chat.js**: The conversational CLI client.
-- **tasks.db**: Your private, local task storage.
+## 🛠️ Tech Stack
+- **Frontend:** Vanilla JS + Glassmorphism CSS.
+- **Backend:** Node.js + Express (Web UI Server).
+- **Database:** Native SQLite (sqlite3) with persistent transaction history.
+- **Protocol:** MCP Standard stdio transport.
