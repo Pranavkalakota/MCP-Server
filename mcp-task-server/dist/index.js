@@ -2,34 +2,31 @@
 // MCP Task Manager Server — CS 290 Final Challenge
 // Team Members: Pranav Kalakota
 // ============================================================
-// Two tools:
-//   1. add_task  — Create a task (title, description, priority, due date)
-//   2. get_tasks — Filter/search tasks by status, priority, or keyword
+// Three tools:
+//   1. add_task    — Create a task (title, description, priority, due date)
+//   2. get_tasks   — Filter/search tasks by status, priority, or keyword
+//   3. delete_task — Delete a task by ID or Title
 //
 // Storage: SQLite (sql.js)  |  Transport: stdio
 // ============================================================
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import initSqlJs from "sql.js";
+import sqlite3 from "sqlite3";
+import { open } from "sqlite";
 import path from "node:path";
-import fs from "node:fs";
 import express from "express";
 import cors from "cors";
 // ———————————————— Database ————————————————
 const DB_PATH = path.join(process.env.MCP_TASK_DB_PATH || process.cwd(), "tasks.db");
 let db;
 async function initDatabase() {
-    const SQL = await initSqlJs();
-    if (fs.existsSync(DB_PATH)) {
-        db = new SQL.Database(fs.readFileSync(DB_PATH));
-        console.error(`[mcp-task-server] Loaded DB from ${DB_PATH}`);
-    }
-    else {
-        db = new SQL.Database();
-        console.error(`[mcp-task-server] Created new DB at ${DB_PATH}`);
-    }
-    db.run(`
+    db = await open({
+        filename: DB_PATH,
+        driver: sqlite3.Database
+    });
+    console.error(`[mcp-task-server] Connected to real SQLite DB at ${DB_PATH}`);
+    await db.exec(`
     CREATE TABLE IF NOT EXISTS tasks (
       id          INTEGER PRIMARY KEY AUTOINCREMENT,
       title       TEXT    NOT NULL,
@@ -41,11 +38,8 @@ async function initDatabase() {
       updated_at  TEXT    DEFAULT (datetime('now'))
     );
   `);
-    saveDb();
 }
-function saveDb() {
-    fs.writeFileSync(DB_PATH, Buffer.from(db.export()));
-}
+// "saveDb" is removed because native sqlite3 writes instantly to the disk!
 // ———————————————— MCP Server ————————————————
 const server = new McpServer({
     name: "mcp-task-server",
@@ -62,11 +56,8 @@ server.tool("add_task", "Create a new task. Returns the created task with its ID
         const desc = description ?? "";
         const prio = priority ?? "medium";
         const due = due_date ?? null;
-        db.run(`INSERT INTO tasks (title, description, priority, due_date) VALUES (?, ?, ?, ?)`, [title, desc, prio, due]);
-        // Get the ID before saveDb which may interfere with last_insert_rowid
-        const idResult = db.exec(`SELECT last_insert_rowid() as id`);
-        const insertedId = idResult.length > 0 ? idResult[0].values[0][0] : null;
-        saveDb();
+        const runResult = await db.run(`INSERT INTO tasks (title, description, priority, due_date) VALUES (?, ?, ?, ?)`, [title, desc, prio, due]);
+        const insertedId = runResult.lastID;
         if (insertedId == null) {
             return {
                 content: [
@@ -77,21 +68,18 @@ server.tool("add_task", "Create a new task. Returns the created task with its ID
                 ],
             };
         }
-        // Grab the newly inserted row by known ID
-        const result = db.exec(`SELECT * FROM tasks WHERE id = ${insertedId}`);
-        if (!result || !result.length || !result[0] || !result[0].values || !result[0].values.length) {
+        // Grab the newly inserted row natively
+        const task = await db.get(`SELECT * FROM tasks WHERE id = ?`, [insertedId]);
+        if (!task) {
             return {
                 content: [
                     {
                         type: "text",
-                        text: JSON.stringify({ success: true, id: insertedId, title, description: desc, priority: prio, due_date: due, debug: { resultLength: result?.length, resultAtZero: result?.[0] ? 'exists' : 'null' } }, null, 2),
+                        text: JSON.stringify({ success: true, id: insertedId, title, description: desc, priority: prio, due_date: due }, null, 2),
                     },
                 ],
             };
         }
-        const cols = result[0].columns;
-        const vals = result[0].values[0];
-        const task = Object.fromEntries(cols.map((c, i) => [c, vals[i]]));
         return {
             content: [
                 {
@@ -137,17 +125,12 @@ server.tool("get_tasks", "Search and filter tasks. Returns matching tasks as JSO
       CASE priority WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 END,
       due_date ASC NULLS LAST,
       created_at DESC`;
-    const result = db.exec(query.replace(/\?/g, () => {
-        const val = params.shift();
-        return `'${val.replace(/'/g, "''")}'`;
-    }));
-    if (!result.length || !result[0].values.length) {
+    const tasks = await db.all(query, params);
+    if (!tasks || tasks.length === 0) {
         return {
             content: [{ type: "text", text: "No tasks found matching your filters." }],
         };
     }
-    const cols = result[0].columns;
-    const tasks = result[0].values.map((row) => Object.fromEntries(cols.map((c, i) => [c, row[i]])));
     return {
         content: [
             {
@@ -157,23 +140,44 @@ server.tool("get_tasks", "Search and filter tasks. Returns matching tasks as JSO
         ],
     };
 });
+// ──────────── Tool 3: delete_task ────────────
+server.tool("delete_task", "Delete a task. You can specify the task ID or the exact title.", {
+    id: z.number().optional().describe("Internal task ID"),
+    title: z.string().optional().describe("Exact title of the task to delete"),
+}, async ({ id, title }) => {
+    if (id !== undefined) {
+        await db.run(`DELETE FROM tasks WHERE id = ?`, [id]);
+    }
+    else if (title !== undefined) {
+        await db.run(`DELETE FROM tasks WHERE title = ?`, [title]);
+    }
+    else {
+        return {
+            content: [{ type: "text", text: "Error: You must provide either an 'id' or a 'title'." }],
+            isError: true,
+        };
+    }
+    return {
+        content: [{ type: "text", text: `Successfully deleted task(s) matching ${id ? `ID ${id}` : `title "${title}"`}.` }],
+    };
+});
 // ———————————————— Start Server ————————————————
 async function startWebServer() {
     const app = express();
     app.use(cors());
     app.use(express.json());
-    app.get("/tasks", (req, res) => {
-        const result = db.exec("SELECT * FROM tasks ORDER BY id DESC");
-        if (!result.length)
-            return res.json([]);
-        const cols = result[0].columns;
-        const tasks = result[0].values.map(row => Object.fromEntries(cols.map((c, i) => [c, row[i]])));
+    app.get("/tasks", async (req, res) => {
+        const tasks = await db.all("SELECT * FROM tasks ORDER BY id DESC");
         res.json(tasks);
     });
-    app.post("/tasks", (req, res) => {
+    app.post("/tasks", async (req, res) => {
         const { title, description, priority, due_date } = req.body;
-        db.run(`INSERT INTO tasks (title, description, priority, due_date) VALUES (?, ?, ?, ?)`, [title, description || "", priority || "medium", due_date || null]);
-        saveDb();
+        await db.run(`INSERT INTO tasks (title, description, priority, due_date) VALUES (?, ?, ?, ?)`, [title, description || "", priority || "medium", due_date || null]);
+        res.json({ success: true });
+    });
+    app.delete("/tasks/:id", async (req, res) => {
+        const { id } = req.params;
+        await db.run(`DELETE FROM tasks WHERE id = ?`, [id]);
         res.json({ success: true });
     });
     app.listen(3000, () => {

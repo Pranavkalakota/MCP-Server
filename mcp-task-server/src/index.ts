@@ -13,7 +13,8 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import initSqlJs, { type Database } from "sql.js";
+import sqlite3 from "sqlite3";
+import { open, type Database } from "sqlite";
 import path from "node:path";
 import fs from "node:fs";
 import express from "express";
@@ -25,17 +26,14 @@ const DB_PATH = path.join(process.env.MCP_TASK_DB_PATH || process.cwd(), "tasks.
 let db: Database;
 
 async function initDatabase(): Promise<void> {
-    const SQL = await initSqlJs();
+    db = await open({
+        filename: DB_PATH,
+        driver: sqlite3.Database
+    });
 
-    if (fs.existsSync(DB_PATH)) {
-        db = new SQL.Database(fs.readFileSync(DB_PATH));
-        console.error(`[mcp-task-server] Loaded DB from ${DB_PATH}`);
-    } else {
-        db = new SQL.Database();
-        console.error(`[mcp-task-server] Created new DB at ${DB_PATH}`);
-    }
+    console.error(`[mcp-task-server] Connected to real SQLite DB at ${DB_PATH}`);
 
-    db.run(`
+    await db.exec(`
     CREATE TABLE IF NOT EXISTS tasks (
       id          INTEGER PRIMARY KEY AUTOINCREMENT,
       title       TEXT    NOT NULL,
@@ -47,12 +45,10 @@ async function initDatabase(): Promise<void> {
       updated_at  TEXT    DEFAULT (datetime('now'))
     );
   `);
-    saveDb();
 }
 
-function saveDb(): void {
-    fs.writeFileSync(DB_PATH, Buffer.from(db.export()));
-}
+// "saveDb" is removed because native sqlite3 writes instantly to the disk!
+
 
 // ———————————————— MCP Server ————————————————
 
@@ -78,16 +74,12 @@ server.tool(
             const prio = priority ?? "medium";
             const due = due_date ?? null;
 
-            db.run(
+            const runResult = await db.run(
                 `INSERT INTO tasks (title, description, priority, due_date) VALUES (?, ?, ?, ?)`,
                 [title, desc, prio, due]
             );
 
-            // Get the ID before saveDb which may interfere with last_insert_rowid
-            const idResult = db.exec(`SELECT last_insert_rowid() as id`);
-            const insertedId = idResult.length > 0 ? idResult[0].values[0][0] : null;
-
-            saveDb();
+            const insertedId = runResult.lastID;
 
             if (insertedId == null) {
                 return {
@@ -100,25 +92,19 @@ server.tool(
                 };
             }
 
-            // Grab the newly inserted row by known ID
-            const result = db.exec(
-                `SELECT * FROM tasks WHERE id = ${insertedId}`
-            );
+            // Grab the newly inserted row natively
+            const task = await db.get(`SELECT * FROM tasks WHERE id = ?`, [insertedId]);
 
-            if (!result || !result.length || !result[0] || !result[0].values || !result[0].values.length) {
+            if (!task) {
                 return {
                     content: [
                         {
                             type: "text" as const,
-                            text: JSON.stringify({ success: true, id: insertedId, title, description: desc, priority: prio, due_date: due, debug: { resultLength: result?.length, resultAtZero: result?.[0] ? 'exists' : 'null' } }, null, 2),
+                            text: JSON.stringify({ success: true, id: insertedId, title, description: desc, priority: prio, due_date: due }, null, 2),
                         },
                     ],
                 };
             }
-
-            const cols = result[0].columns;
-            const vals = result[0].values[0];
-            const task = Object.fromEntries(cols.map((c: string, i: number) => [c, vals[i]]));
 
             return {
                 content: [
@@ -174,21 +160,13 @@ server.tool(
       due_date ASC NULLS LAST,
       created_at DESC`;
 
-        const result = db.exec(query.replace(/\?/g, () => {
-            const val = params.shift()!;
-            return `'${val.replace(/'/g, "''")}'`;
-        }));
+        const tasks = await db.all(query, params);
 
-        if (!result.length || !result[0].values.length) {
+        if (!tasks || tasks.length === 0) {
             return {
                 content: [{ type: "text" as const, text: "No tasks found matching your filters." }],
             };
         }
-
-        const cols = result[0].columns;
-        const tasks = result[0].values.map((row: any[]) =>
-            Object.fromEntries(cols.map((c: string, i: number) => [c, row[i]]))
-        );
 
         return {
             content: [
@@ -212,16 +190,15 @@ server.tool(
     },
     async ({ id, title }) => {
         if (id !== undefined) {
-            db.run(`DELETE FROM tasks WHERE id = ?`, [id]);
+            await db.run(`DELETE FROM tasks WHERE id = ?`, [id]);
         } else if (title !== undefined) {
-            db.run(`DELETE FROM tasks WHERE title = ?`, [title]);
+            await db.run(`DELETE FROM tasks WHERE title = ?`, [title]);
         } else {
             return {
                 content: [{ type: "text" as const, text: "Error: You must provide either an 'id' or a 'title'." }],
                 isError: true,
             };
         }
-        saveDb();
         return {
             content: [{ type: "text" as const, text: `Successfully deleted task(s) matching ${id ? `ID ${id}` : `title "${title}"`}.` }],
         };
@@ -235,30 +212,23 @@ async function startWebServer(): Promise<void> {
     app.use(cors());
     app.use(express.json());
 
-    app.get("/tasks", (req, res) => {
-        const result = db.exec("SELECT * FROM tasks ORDER BY id DESC");
-        if (!result.length) return res.json([]);
-        const cols = result[0].columns;
-        const tasks = result[0].values.map(row =>
-            Object.fromEntries(cols.map((c, i) => [c, row[i]]))
-        );
+    app.get("/tasks", async (req, res) => {
+        const tasks = await db.all("SELECT * FROM tasks ORDER BY id DESC");
         res.json(tasks);
     });
 
-    app.post("/tasks", (req, res) => {
+    app.post("/tasks", async (req, res) => {
         const { title, description, priority, due_date } = req.body;
-        db.run(
+        await db.run(
             `INSERT INTO tasks (title, description, priority, due_date) VALUES (?, ?, ?, ?)`,
             [title, description || "", priority || "medium", due_date || null]
         );
-        saveDb();
         res.json({ success: true });
     });
 
-    app.delete("/tasks/:id", (req, res) => {
+    app.delete("/tasks/:id", async (req, res) => {
         const { id } = req.params;
-        db.run(`DELETE FROM tasks WHERE id = ?`, [id]);
-        saveDb();
+        await db.run(`DELETE FROM tasks WHERE id = ?`, [id]);
         res.json({ success: true });
     });
 
