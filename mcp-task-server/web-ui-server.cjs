@@ -99,8 +99,8 @@ async function start() {
                 }
                 return res.json({ response: "I'm not exactly sure what to do with that." });
             } catch (err) {
-                console.error("OpenAI Error:", err);
-                return res.json({ response: "OpenAI parsing failed. Please check your API key." });
+                console.error("OpenAI Error (Falling back to local NLP):", err.message);
+                // We don't return here anymore—we just let it fall through to the fallback logic below!
             }
         }
 

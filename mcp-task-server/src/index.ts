@@ -240,11 +240,6 @@ async function startWebServer(): Promise<void> {
 async function main(): Promise<void> {
     await initDatabase();
 
-    // Start web server without blocking the MCP connection
-    startWebServer().catch(err => {
-        console.error("[mcp-task-server] Web server failed to start:", err);
-    });
-
     const transport = new StdioServerTransport();
     await server.connect(transport);
     console.error("[mcp-task-server] MCP Server running on stdio");
