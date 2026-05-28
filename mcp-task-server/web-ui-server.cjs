@@ -18,7 +18,6 @@ async function start() {
         if (err) console.error("Database error:", err.message);
         else {
             console.log("Connected to local SQLite database.");
-            // Automatically initialize the table for new users (professors, TAs, etc.)
             db.exec(`
                 CREATE TABLE IF NOT EXISTS tasks (
                     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -44,6 +43,9 @@ async function start() {
     app.use(cors());
     app.use(express.json());
 
+    // Serve the task-ui folder as static files
+    app.use(express.static(path.join(__dirname, '../task-ui')));
+
     const all = (query, params = []) => new Promise((resolve, reject) => {
         db.all(query, params, (err, rows) => err ? reject(err) : resolve(rows));
     });
@@ -56,7 +58,6 @@ async function start() {
         db.get(query, params, (err, row) => err ? reject(err) : resolve(row));
     });
 
-    // Helper to re-sequence IDs to match 1, 2, 3...
     const syncIds = async () => {
         const rows = await all("SELECT * FROM tasks ORDER BY id ASC");
         await run("DELETE FROM tasks");
@@ -81,12 +82,10 @@ async function start() {
         await run("DELETE FROM undo_history WHERE id = ?", [entry.id]);
 
         if (entry.type === "add") {
-            // Re-adding a deleted task
             await run("INSERT INTO tasks (title, description, priority, status, due_date) VALUES (?, ?, ?, ?, ?)",
                 [data.title, data.description, data.priority, data.status, data.due_date]);
             await pushHistory("delete", { title: data.title }, isUndoRequest ? 1 : 0);
         } else if (entry.type === "delete") {
-            // Deleting an added task
             const matches = await all("SELECT * FROM tasks WHERE title = ? ORDER BY id DESC LIMIT 1", [data.title]);
             if (matches.length) {
                 const target = matches[0];
@@ -145,8 +144,6 @@ async function start() {
         const tasks = await all("SELECT * FROM tasks ORDER BY id ASC");
         const prefix = openai ? `[Mode: ${OPENAI_MODEL}] ` : `[Mode: ${modelName}] `;
 
-        // --- GLOBAL CONFIRMATION HANDLER (Runs before ANY AI/NLP logic) ---
-        // If the user says "yes" to a confirmation prompt, we handle it strictly based on the ID in that prompt.
         const confirmationWords = ["yes", "do it", "confirm", "yea", "yup", "sure", "ok"];
         if (confirmationWords.includes(msg) && lastResponse && (lastResponse.includes("confirm you want to delete") || lastResponse.includes("confirm you want to remove"))) {
             const idMatch = lastResponse.match(/#(\d+)/);
@@ -154,7 +151,7 @@ async function start() {
                 const targetId = parseInt(idMatch[1]);
                 const task = await get("SELECT * FROM tasks WHERE id = ?", [targetId]);
                 if (task) {
-                    const deletedTitle = task.title; // Capture title before deletion
+                    const deletedTitle = task.title;
                     await pushHistory("add", task);
                     await run("DELETE FROM tasks WHERE id = ?", [targetId]);
                     await syncIds();
@@ -197,7 +194,6 @@ async function start() {
                 });
 
                 const gpt = JSON.parse(completion.choices[0].message.content);
-                const prefix = `[Mode: ${OPENAI_MODEL}] `;
 
                 if (gpt.action === "add") {
                     const title = gpt.title || message;
@@ -210,7 +206,6 @@ async function start() {
                     return res.json({ response: `${prefix}${gpt.message}`, model: OPENAI_MODEL });
                 }
                 else if (gpt.action === "delete") {
-                    // Logic override for "delete last" or hallucinated IDs
                     let targetId = gpt.id;
                     const lastKeywords = ["last", "latest", "recent", "just added", "just made"];
                     if (lastKeywords.some(k => message.toLowerCase().includes(k)) && tasks.length > 0) {
@@ -231,20 +226,17 @@ async function start() {
                 return res.json({ response: `${prefix}I'm not sure how to help. Try 'add lunch'.`, model: OPENAI_MODEL });
             } catch (err) {
                 console.error(`OpenAI Error (${OPENAI_MODEL}):`, err.message);
-                // Fall through to local NLP logic below
             }
         }
 
         console.log("AI CHAT: Using Local NLP Fallback");
         const fallbackPrefix = `[Mode: ${modelName}] `;
 
-        // Fuzzy Match Regex Patterns (Handles repeated letters)
         const addRegex = /\b(a+d+s?|c+r+e+a+t+e+|m+a+k+e+|n+e+w+)\b/i;
         const deleteRegex = /\b(d+e+l+e+t+e+|r+e+m+o+v+e+|c+l+e+a+r+|t+a+k+e+\s+o+u+t+|d+e+l+)\b/i;
         const undoRegex = /\b(u+n+d+o+|r+e+v+e+r+t+|o+o+p+s+)\b/i;
         const redoRegex = /\b(r+e+d+o+|b+r+i+n+g+\s+b+a+c+k+)\b/i;
 
-        // 2. Undo/Redo (Fuzzy)
         if (undoRegex.test(msg)) {
             const resText = await performHistoryAction(true);
             return res.json({ response: resText ? `${fallbackPrefix}Undone! ${resText}.` : `${fallbackPrefix}Nothing to undo.`, model: modelName });
@@ -254,7 +246,6 @@ async function start() {
             return res.json({ response: resText ? `${fallbackPrefix}Redone! ${resText}.` : `${fallbackPrefix}Nothing to redo.`, model: modelName });
         }
 
-        // 3. Delete (Fuzzy & Keywords)
         if (deleteRegex.test(msg) && !addRegex.test(msg)) {
             let targetId = null;
             let targetTitle = "";
@@ -292,12 +283,10 @@ async function start() {
             }
         }
 
-        // 4. List Check
         if (msg.includes("list") || msg.includes("show") || msg.includes("tasks")) {
             return res.json({ response: `${fallbackPrefix}You have ${tasks.length} task(s).`, model: modelName });
         }
 
-        // 5. Default to Add
         let title = message;
         if (addRegex.test(msg)) {
             title = message.replace(new RegExp(addRegex.source, 'gi'), "").trim();
@@ -311,7 +300,6 @@ async function start() {
         await syncIds();
         return res.json({ response: `${fallbackPrefix}Added task: "${title}"`, model: modelName });
     });
-
 
     app.listen(3000, () => {
         console.log("Web API running on http://localhost:3000");
