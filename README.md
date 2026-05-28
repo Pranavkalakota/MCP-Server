@@ -1,7 +1,7 @@
 # 🚀 MCP Task Manager Server
 **Conversational AI Assistant & Dashboard**
 
-This is a comprehensive Task Management system built on the **Model Context Protocol (MCP)**. It features a high-performance SQLite backend, a stunning Glassmorphism Web Dashboard, and an intelligent Conversational AI Assistant.
+This is a comprehensive Task Management system built on the **Model Context Protocol (MCP)**. It features a SQLite backend, a stunning Glassmorphism Web Dashboard, and an intelligent Conversational AI Assistant.
 
 ---
 
